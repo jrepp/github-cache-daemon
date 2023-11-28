@@ -34,7 +34,6 @@ import (
 	"github.com/google/gitprotocolio"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/tag"
-	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -135,6 +134,7 @@ func (r *managedRepository) lsRefsUpstream(command []*gitprotocolio.ProtocolV2Re
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "cannot obtain an OAuth2 access token for the server: %v", err)
 	}
+	t.SetAuthHeader(req)
 	req.Header.Add("Content-Type", "application/x-git-upload-pack-request")
 	req.Header.Add("Accept", "application/x-git-upload-pack-result")
 	req.Header.Add("Git-Protocol", "version=2")
@@ -319,7 +319,6 @@ func (r *managedRepository) fetchUpstream() (err error) {
 		splitGitFetch = true
 	}
 
-	var t *oauth2.Token
 	startTime := time.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
