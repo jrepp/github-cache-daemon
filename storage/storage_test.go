@@ -84,7 +84,6 @@ func (m *mockWriteCloser) Close() error {
 type mockIterator struct {
 	items   []*ObjectAttrs
 	index   int
-	err     error
 	nextErr error
 }
 
@@ -549,7 +548,7 @@ func TestProvider_ConcurrentAccess(t *testing.T) {
 	done := make(chan error, numGoroutines)
 
 	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
+		go func(_ int) {
 			ctx := context.Background()
 
 			// Test concurrent writes

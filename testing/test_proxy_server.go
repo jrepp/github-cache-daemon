@@ -71,9 +71,9 @@ func NewTestServer(config *TestServerConfig) *TestServer {
 	s := &TestServer{}
 	{
 		s.UpstreamGitRepo = NewLocalBareGitRepo()
-		s.UpstreamGitRepo.Run("config", "http.receivepack", "1")
-		s.UpstreamGitRepo.Run("config", "uploadpack.allowfilter", "1")
-		s.UpstreamGitRepo.Run("config", "receive.advertisepushoptions", "1")
+		_, _ = s.UpstreamGitRepo.Run("config", "http.receivepack", "1")
+		_, _ = s.UpstreamGitRepo.Run("config", "uploadpack.allowfilter", "1")
+		_, _ = s.UpstreamGitRepo.Run("config", "receive.advertisepushoptions", "1")
 
 		s.upstreamServer = httptest.NewServer(http.HandlerFunc(s.upstreamServerHandler))
 		s.UpstreamServerURL = s.upstreamServer.URL
@@ -199,7 +199,7 @@ func NewLocalBareGitRepo() GitRepo {
 		log.Fatal(err)
 	}
 	r := GitRepo(dir)
-	r.Run("init", "--bare")
+	_, _ = r.Run("init", "--bare")
 	return r
 }
 
@@ -209,10 +209,10 @@ func NewLocalGitRepo() GitRepo {
 		log.Fatal(err)
 	}
 	r := GitRepo(dir)
-	r.Run("init")
-	r.Run("config", "user.email", "local-root@example.com")
-	r.Run("config", "user.name", "local root")
-	r.Run("config", "protocol.version", "2")
+	_, _ = r.Run("init")
+	_, _ = r.Run("config", "user.email", "local-root@example.com")
+	_, _ = r.Run("config", "user.name", "local root")
+	_, _ = r.Run("config", "protocol.version", "2")
 	return r
 }
 
