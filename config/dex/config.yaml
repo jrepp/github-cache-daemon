@@ -1,0 +1,79 @@
+# Dex configuration for Goblet authentication
+issuer: http://dex:5556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+telemetry:
+  http: 0.0.0.0:5558
+
+# Frontend configuration
+frontend:
+  issuer: Goblet Auth
+  theme: light
+
+# Enable password connector for static users
+enablePasswordDB: true
+
+# Static passwords for development/testing
+staticPasswords:
+  - email: "admin@goblet.local"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"  # password: admin
+    username: "admin"
+    userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+  - email: "developer@goblet.local"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"  # password: admin
+    username: "developer"
+    userID: "9b0e24e2-7c3f-4b3e-8a4e-3f5c8b2a1d9e"
+  - email: "test@goblet.local"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"  # password: admin
+    username: "test"
+    userID: "1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p"
+
+# OAuth2 clients
+staticClients:
+  - id: goblet-server
+    redirectURIs:
+      - 'http://localhost:8888/callback'
+      - 'http://goblet:8888/callback'
+      - 'urn:ietf:wg:oauth:2.0:oob'  # For CLI/device flow
+    name: 'Goblet Git Cache Server'
+    secret: goblet-secret-key-change-in-production
+    public: false
+
+  - id: goblet-cli
+    redirectURIs:
+      - 'http://localhost:5555/callback'
+      - 'urn:ietf:wg:oauth:2.0:oob'
+    name: 'Goblet CLI'
+    secret: goblet-cli-secret
+    public: false
+
+  - id: test-client
+    redirectURIs:
+      - 'http://localhost:8888/callback'
+      - 'urn:ietf:wg:oauth:2.0:oob'
+    name: 'Test Client'
+    secret: test-secret
+    public: false
+
+# CORS configuration
+oauth2:
+  skipApprovalScreen: true
+  responseTypes: ["code", "token", "id_token"]
+
+# Connectors for external IdPs (optional, for future use)
+connectors: []
+
+# Expiry configuration
+expiry:
+  deviceRequests: "5m"
+  signingKeys: "6h"
+  idTokens: "24h"
+  authRequests: "24h"
+  refreshTokens:
+    validIfNotUsedFor: "720h"  # 30 days
+    absoluteLifetime: "2160h"  # 90 days
