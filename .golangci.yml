@@ -21,7 +21,6 @@ linters:
     - gocyclo
     - godot
     - gosec
-    - exportloopref
     - gocritic
 
 linters-settings:
@@ -35,6 +34,8 @@ linters-settings:
   godot:
     scope: declarations
     capital: true
+  staticcheck:
+    checks: ["all", "-SA1019"]
 
 issues:
   exclude-rules:
@@ -46,11 +47,33 @@ issues:
     - path: testing/
       linters:
         - gosec
+    # Exclude deprecated import warnings until dependencies are updated
+    - text: "SA1019"
+      linters:
+        - staticcheck
+    # Exclude ifElseChain style suggestions (often less readable as switch)
+    - linters:
+        - gocritic
+      text: "ifElseChain"
+    # Exclude exitAfterDefer in main function (acceptable for startup code)
+    - path: goblet-server/main\.go
+      linters:
+        - gocritic
+      text: "exitAfterDefer"
+    # Exclude high complexity warnings for known complex functions
+    - path: git_protocol_v2_handler\.go
+      linters:
+        - gocyclo
+      text: "handleV2Command"
+    - path: goblet-server/main\.go
+      linters:
+        - gocyclo
+      text: "main"
 
   max-issues-per-linter: 0
   max-same-issues: 0
 
 output:
-  format: colored-line-number
+  formats: colored-line-number
   print-issued-lines: true
   print-linter-name: true

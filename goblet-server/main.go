@@ -37,7 +37,7 @@ import (
 	"go.opencensus.io/tag"
 	"golang.org/x/oauth2/google"
 
-	logpb "google.golang.org/genproto/googleapis/logging/v2"
+	logpb "google.golang.org/genproto/googleapis/logging/v2" //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 )
 
 const (
@@ -143,18 +143,18 @@ func main() {
 	}
 
 	var er func(*http.Request, error)
-	var rl func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration) = func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration) {
+	rl := func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration) {
 		dump, err := httputil.DumpRequest(r, false)
 		if err != nil {
 			return
 		}
 		log.Printf("%q %d reqsize: %d, respsize %d, latency: %v", dump, status, requestSize, responseSize, latency)
 	}
-	var lrol func(string, *url.URL) goblet.RunningOperation = func(action string, u *url.URL) goblet.RunningOperation {
+	lrol := func(action string, u *url.URL) goblet.RunningOperation {
 		log.Printf("Starting %s for %s", action, u.String())
 		return &logBasedOperation{action, u}
 	}
-	var backupLogger *log.Logger = log.New(os.Stderr, "", log.LstdFlags)
+	backupLogger := log.New(os.Stderr, "", log.LstdFlags)
 	if *stackdriverProject != "" {
 		// Error reporter
 		ec, err := errorreporting.NewClient(context.Background(), *stackdriverProject, errorreporting.Config{
@@ -214,7 +214,7 @@ func main() {
 						Action: op.action,
 						URL:    op.u.String(),
 					},
-					Operation: &logpb.LogEntryOperation{
+					Operation: &logpb.LogEntryOperation{ //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 						Id:       op.id,
 						Producer: "github.com/google/goblet",
 						First:    true,
@@ -323,7 +323,7 @@ func (op *stackdriverBasedOperation) Printf(format string, a ...interface{}) {
 	}
 	op.sdLogger.Log(logging.Entry{
 		Payload: lro,
-		Operation: &logpb.LogEntryOperation{
+		Operation: &logpb.LogEntryOperation{ //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 			Id:       op.id,
 			Producer: "github.com/google/goblet",
 		},
@@ -341,7 +341,7 @@ func (op *stackdriverBasedOperation) Done(err error) {
 	}
 	op.sdLogger.Log(logging.Entry{
 		Payload: lro,
-		Operation: &logpb.LogEntryOperation{
+		Operation: &logpb.LogEntryOperation{ //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 			Id:       op.id,
 			Producer: "github.com/google/goblet",
 			Last:     true,

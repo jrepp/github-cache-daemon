@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package google provides Google-specific integrations for goblet.
 package google
 
 import (
@@ -62,10 +63,10 @@ func NewRequestAuthorizer(ts oauth2.TokenSource) (func(*http.Request) error, err
 	// Check that the server setup is correct.
 	hasCloudPlatform, hasUserInfoEmail := scopeCheck(ti.Scope)
 	if !hasCloudPlatform {
-		return nil, fmt.Errorf("the server credential doesn't have %s scope. This is needed to access upstream repositories.", scopeCloudPlatform)
+		return nil, fmt.Errorf("the server credential doesn't have %s scope: needed to access upstream repositories", scopeCloudPlatform)
 	}
 	if !hasUserInfoEmail {
-		return nil, fmt.Errorf("the server credential doesn't have %s scope. This is needed to get the email address of the service account.", scopeUserInfoEmail)
+		return nil, fmt.Errorf("the server credential doesn't have %s scope: needed to get the email address of the service account", scopeUserInfoEmail)
 	}
 	if ti.Email == "" {
 		return nil, fmt.Errorf("cannot obtain the server's service account email")

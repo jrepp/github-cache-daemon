@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and.
 // limitations under the License.
 
+// Package storage provides an abstraction layer for object storage backends.
 package storage
 
 import (
