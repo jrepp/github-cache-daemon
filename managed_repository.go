@@ -138,7 +138,10 @@ func (r *managedRepository) lsRefsUpstream(command []*gitprotocolio.ProtocolV2Re
 	req.Header.Add("Content-Type", "application/x-git-upload-pack-request")
 	req.Header.Add("Accept", "application/x-git-upload-pack-result")
 	req.Header.Add("Git-Protocol", "version=2")
-	t.SetAuthHeader(req)
+	// Only set auth header if we have a valid token
+	if t.AccessToken != "" {
+		t.SetAuthHeader(req)
+	}
 
 	startTime := time.Now()
 	resp, err := http.DefaultClient.Do(req)
@@ -199,7 +202,11 @@ func (r *managedRepository) fetchUpstream() (err error) {
 			err = status.Errorf(codes.Internal, "cannot obtain an OAuth2 access token for the server: %v", err)
 			return err
 		}
-		err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "-n", "origin", "refs/heads/*:refs/heads/*", "refs/changes/*:refs/changes/*")
+		if t.AccessToken != "" {
+			err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "-n", "origin", "refs/heads/*:refs/heads/*", "refs/changes/*:refs/changes/*")
+		} else {
+			err = runGit(op, r.localDiskPath, "fetch", "--progress", "-f", "-n", "origin", "refs/heads/*:refs/heads/*", "refs/changes/*:refs/changes/*")
+		}
 	}
 	if err == nil {
 		t, err = r.config.TokenSource.Token()
@@ -207,7 +214,11 @@ func (r *managedRepository) fetchUpstream() (err error) {
 			err = status.Errorf(codes.Internal, "cannot obtain an OAuth2 access token for the server: %v", err)
 			return err
 		}
-		err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "origin")
+		if t.AccessToken != "" {
+			err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "origin")
+		} else {
+			err = runGit(op, r.localDiskPath, "fetch", "--progress", "-f", "origin")
+		}
 	}
 	logStats("fetch", startTime, err)
 	if err == nil {
