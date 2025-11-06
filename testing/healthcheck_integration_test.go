@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// TestHealthCheckEndpoint tests the /healthz endpoint
+// TestHealthCheckEndpoint tests the /healthz endpoint.
 func TestHealthCheckEndpoint(t *testing.T) {
 	// Setup test server
 	ts := NewTestServer(&TestServerConfig{
@@ -77,7 +77,7 @@ func TestHealthCheckEndpoint(t *testing.T) {
 	}
 }
 
-// TestHealthCheckWithMinio tests health check with actual Minio instance
+// TestHealthCheckWithMinio tests health check with actual Minio instance.
 func TestHealthCheckWithMinio(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -105,7 +105,7 @@ func TestHealthCheckWithMinio(t *testing.T) {
 	t.Log("Minio is healthy and responding")
 }
 
-// TestServerReadiness tests that the server becomes ready quickly
+// TestServerReadiness tests that the server becomes ready quickly.
 func TestServerReadiness(t *testing.T) {
 	start := time.Now()
 

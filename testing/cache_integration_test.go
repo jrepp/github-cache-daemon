@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// TestCacheHitBehavior tests that subsequent fetches use the cache
+// TestCacheHitBehavior tests that subsequent fetches use the cache.
 func TestCacheHitBehavior(t *testing.T) {
 	// Track requests to upstream
 	var upstreamRequests int
@@ -79,7 +79,7 @@ func TestCacheHitBehavior(t *testing.T) {
 	}
 }
 
-// TestCacheConsistency tests that multiple concurrent fetches remain consistent
+// TestCacheConsistency tests that multiple concurrent fetches remain consistent.
 func TestCacheConsistency(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -142,7 +142,7 @@ func TestCacheConsistency(t *testing.T) {
 	t.Logf("All %d concurrent clients got consistent results: %s", numClients, commitHash)
 }
 
-// TestCacheInvalidationOnUpdate tests that cache updates when upstream changes
+// TestCacheInvalidationOnUpdate tests that cache updates when upstream changes.
 func TestCacheInvalidationOnUpdate(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -209,7 +209,7 @@ func TestCacheInvalidationOnUpdate(t *testing.T) {
 	t.Logf("Cache invalidation successful: %s -> %s", firstCommit, secondCommit)
 }
 
-// TestCacheWithDifferentRepositories tests caching across different repositories
+// TestCacheWithDifferentRepositories tests caching across different repositories.
 func TestCacheWithDifferentRepositories(t *testing.T) {
 	// Create two separate test servers (representing different repositories)
 	ts1 := NewTestServer(&TestServerConfig{

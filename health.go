@@ -23,26 +23,26 @@ import (
 	"github.com/google/goblet/storage"
 )
 
-// HealthStatus represents the overall health status
+// HealthStatus represents the overall health status.
 type HealthStatus string
 
 const (
-	// HealthStatusHealthy indicates all systems are operational
+	// HealthStatusHealthy indicates all systems are operational.
 	HealthStatusHealthy HealthStatus = "healthy"
-	// HealthStatusDegraded indicates some non-critical systems are impaired
+	// HealthStatusDegraded indicates some non-critical systems are impaired.
 	HealthStatusDegraded HealthStatus = "degraded"
-	// HealthStatusUnhealthy indicates critical systems are failing
+	// HealthStatusUnhealthy indicates critical systems are failing.
 	HealthStatusUnhealthy HealthStatus = "unhealthy"
 )
 
-// ComponentHealth represents the health of a single component
+// ComponentHealth represents the health of a single component.
 type ComponentHealth struct {
 	Status  HealthStatus `json:"status"`
 	Message string       `json:"message,omitempty"`
 	Latency string       `json:"latency,omitempty"`
 }
 
-// HealthCheckResponse represents the full health check response
+// HealthCheckResponse represents the full health check response.
 type HealthCheckResponse struct {
 	Status     HealthStatus               `json:"status"`
 	Timestamp  time.Time                  `json:"timestamp"`
@@ -50,13 +50,13 @@ type HealthCheckResponse struct {
 	Components map[string]ComponentHealth `json:"components"`
 }
 
-// HealthChecker provides health check functionality
+// HealthChecker provides health check functionality.
 type HealthChecker struct {
 	storageProvider storage.Provider
 	version         string
 }
 
-// NewHealthChecker creates a new health checker
+// NewHealthChecker creates a new health checker.
 func NewHealthChecker(provider storage.Provider, version string) *HealthChecker {
 	return &HealthChecker{
 		storageProvider: provider,
@@ -64,7 +64,7 @@ func NewHealthChecker(provider storage.Provider, version string) *HealthChecker 
 	}
 }
 
-// Check performs a health check and returns the status
+// Check performs a health check and returns the status.
 func (hc *HealthChecker) Check(ctx context.Context) *HealthCheckResponse {
 	response := &HealthCheckResponse{
 		Status:     HealthStatusHealthy,
@@ -95,7 +95,7 @@ func (hc *HealthChecker) Check(ctx context.Context) *HealthCheckResponse {
 	return response
 }
 
-// checkStorage checks the storage provider connectivity
+// checkStorage checks the storage provider connectivity.
 func (hc *HealthChecker) checkStorage(ctx context.Context) ComponentHealth {
 	if hc.storageProvider == nil {
 		return ComponentHealth{
@@ -141,7 +141,7 @@ func (hc *HealthChecker) checkStorage(ctx context.Context) ComponentHealth {
 	}
 }
 
-// checkCache checks the local disk cache health
+// checkCache checks the local disk cache health.
 func (hc *HealthChecker) checkCache() ComponentHealth {
 	// For now, we assume cache is healthy if the service is running
 	// In a real implementation, you'd check disk space, permissions, etc.
@@ -151,7 +151,7 @@ func (hc *HealthChecker) checkCache() ComponentHealth {
 	}
 }
 
-// ServeHTTP implements http.Handler for health check endpoint
+// ServeHTTP implements http.Handler for health check endpoint.
 func (hc *HealthChecker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Support both simple and detailed health checks
 	detailed := r.URL.Query().Get("detailed") == "true"
@@ -166,7 +166,7 @@ func (hc *HealthChecker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if health.Status == HealthStatusHealthy {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("ok\n"))
+			_, _ = w.Write([]byte("ok\n"))
 			return
 		}
 
@@ -177,7 +177,7 @@ func (hc *HealthChecker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(status)
-		w.Write([]byte(string(health.Status) + "\n"))
+		_, _ = w.Write([]byte(string(health.Status) + "\n"))
 		return
 	}
 
@@ -190,5 +190,5 @@ func (hc *HealthChecker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(health)
+	_ = json.NewEncoder(w).Encode(health)
 }

@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-// TestBasicFetchOperation tests a basic git fetch through the proxy
+// TestBasicFetchOperation tests a basic git fetch through the proxy.
 func TestBasicFetchOperation(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -63,7 +63,7 @@ func TestBasicFetchOperation(t *testing.T) {
 	t.Log("Basic fetch operation successful")
 }
 
-// TestMultipleFetchOperations tests multiple fetch operations
+// TestMultipleFetchOperations tests multiple fetch operations.
 func TestMultipleFetchOperations(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -112,7 +112,7 @@ func TestMultipleFetchOperations(t *testing.T) {
 	t.Log("Multiple fetch operations successful")
 }
 
-// TestFetchWithProtocolV2 verifies that protocol v2 is being used
+// TestFetchWithProtocolV2 verifies that protocol v2 is being used.
 func TestFetchWithProtocolV2(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -142,7 +142,7 @@ func TestFetchWithProtocolV2(t *testing.T) {
 	t.Log("Protocol v2 fetch successful")
 }
 
-// TestFetchPerformance tests the performance of fetch operations
+// TestFetchPerformance tests the performance of fetch operations.
 func TestFetchPerformance(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping performance test in short mode")
@@ -192,7 +192,7 @@ func TestFetchPerformance(t *testing.T) {
 	}
 }
 
-// TestFetchAfterUpstreamUpdate tests fetching after upstream has been updated
+// TestFetchAfterUpstreamUpdate tests fetching after upstream has been updated.
 func TestFetchAfterUpstreamUpdate(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,

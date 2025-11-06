@@ -2,14 +2,14 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may obtain a copy of the License at.
 //
 // https://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software.
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
+// See the License for the specific language governing permissions and.
 // limitations under the License.
 
 package storage
@@ -22,13 +22,13 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// S3Provider implements Provider for S3-compatible storage (including Minio)
+// S3Provider implements Provider for S3-compatible storage (including Minio).
 type S3Provider struct {
 	client     *minio.Client
 	bucketName string
 }
 
-// NewS3Provider creates a new S3/Minio storage provider
+// NewS3Provider creates a new S3/Minio storage provider.
 func NewS3Provider(ctx context.Context, config *Config) (*S3Provider, error) {
 	client, err := minio.New(config.S3Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(config.S3AccessKeyID, config.S3SecretAccessKey, ""),
@@ -59,7 +59,7 @@ func NewS3Provider(ctx context.Context, config *Config) (*S3Provider, error) {
 	}, nil
 }
 
-// Writer returns a writer for the given object path
+// Writer returns a writer for the given object path.
 func (s *S3Provider) Writer(ctx context.Context, path string) (io.WriteCloser, error) {
 	pr, pw := io.Pipe()
 
@@ -75,17 +75,17 @@ func (s *S3Provider) Writer(ctx context.Context, path string) (io.WriteCloser, e
 	return pw, nil
 }
 
-// Reader returns a reader for the given object path
+// Reader returns a reader for the given object path.
 func (s *S3Provider) Reader(ctx context.Context, path string) (io.ReadCloser, error) {
 	return s.client.GetObject(ctx, s.bucketName, path, minio.GetObjectOptions{})
 }
 
-// Delete removes an object at the given path
+// Delete removes an object at the given path.
 func (s *S3Provider) Delete(ctx context.Context, path string) error {
 	return s.client.RemoveObject(ctx, s.bucketName, path, minio.RemoveObjectOptions{})
 }
 
-// List returns an iterator for objects with the given prefix
+// List returns an iterator for objects with the given prefix.
 func (s *S3Provider) List(ctx context.Context, prefix string) ObjectIterator {
 	ch := s.client.ListObjects(ctx, s.bucketName, minio.ListObjectsOptions{
 		Prefix:    prefix,
@@ -98,18 +98,18 @@ func (s *S3Provider) List(ctx context.Context, prefix string) ObjectIterator {
 	}
 }
 
-// Close closes the S3 client (no-op for Minio client)
+// Close closes the S3 client (no-op for Minio client).
 func (s *S3Provider) Close() error {
 	return nil
 }
 
-// s3Iterator wraps the S3 object channel
+// s3Iterator wraps the S3 object channel.
 type s3Iterator struct {
 	ch  <-chan minio.ObjectInfo
 	ctx context.Context
 }
 
-// Next returns the next object attributes
+// Next returns the next object attributes.
 func (i *s3Iterator) Next() (*ObjectAttrs, error) {
 	select {
 	case obj, ok := <-i.ch:

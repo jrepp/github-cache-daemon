@@ -2,14 +2,14 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may obtain a copy of the License at.
 //
 // https://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software.
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
+// See the License for the specific language governing permissions and.
 // limitations under the License.
 
 package storage
@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-// Provider defines the interface for object storage backends
+// Provider defines the interface for object storage backends.
 type Provider interface {
 	// Writer returns a writer for the given object path
 	Writer(ctx context.Context, path string) (io.WriteCloser, error)
@@ -38,13 +38,13 @@ type Provider interface {
 	Close() error
 }
 
-// ObjectIterator provides iteration over storage objects
+// ObjectIterator provides iteration over storage objects.
 type ObjectIterator interface {
 	// Next returns the next object attributes
 	Next() (*ObjectAttrs, error)
 }
 
-// ObjectAttrs represents object metadata
+// ObjectAttrs represents object metadata.
 type ObjectAttrs struct {
 	Name    string
 	Prefix  string
@@ -53,7 +53,7 @@ type ObjectAttrs struct {
 	Size    int64
 }
 
-// Config holds storage provider configuration
+// Config holds storage provider configuration.
 type Config struct {
 	// Provider type: "gcs" or "s3"
 	Provider string
@@ -70,7 +70,7 @@ type Config struct {
 	S3UseSSL          bool
 }
 
-// NewProvider creates a new storage provider based on configuration
+// NewProvider creates a new storage provider based on configuration.
 func NewProvider(ctx context.Context, config *Config) (Provider, error) {
 	switch config.Provider {
 	case "gcs":

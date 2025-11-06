@@ -27,7 +27,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// TestMinioConnectivity tests basic connectivity to Minio
+// TestMinioConnectivity tests basic connectivity to Minio.
 func TestMinioConnectivity(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -73,7 +73,7 @@ func TestMinioConnectivity(t *testing.T) {
 	}
 }
 
-// TestStorageProviderInitialization tests creating a storage provider
+// TestStorageProviderInitialization tests creating a storage provider.
 func TestStorageProviderInitialization(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -107,7 +107,7 @@ func TestStorageProviderInitialization(t *testing.T) {
 	t.Log("Successfully initialized S3 storage provider with Minio")
 }
 
-// TestBundleBackupAndRestore tests backing up and restoring a repository bundle
+// TestBundleBackupAndRestore tests backing up and restoring a repository bundle.
 func TestBundleBackupAndRestore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -199,7 +199,7 @@ func TestBundleBackupAndRestore(t *testing.T) {
 	}
 }
 
-// TestStorageProviderUploadDownload tests upload and download operations
+// TestStorageProviderUploadDownload tests upload and download operations.
 func TestStorageProviderUploadDownload(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -275,7 +275,7 @@ func TestStorageProviderUploadDownload(t *testing.T) {
 	}
 }
 
-// TestStorageHealthCheck tests the storage provider health check
+// TestStorageHealthCheck tests the storage provider health check.
 func TestStorageHealthCheck(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")

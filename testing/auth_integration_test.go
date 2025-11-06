@@ -20,7 +20,7 @@ import (
 	"testing"
 )
 
-// TestAuthenticationRequired tests that authentication is required
+// TestAuthenticationRequired tests that authentication is required.
 func TestAuthenticationRequired(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -55,7 +55,7 @@ func TestAuthenticationRequired(t *testing.T) {
 	t.Log("Authentication correctly required for fetch operations")
 }
 
-// TestValidAuthentication tests that valid tokens work
+// TestValidAuthentication tests that valid tokens work.
 func TestValidAuthentication(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -91,7 +91,7 @@ func TestValidAuthentication(t *testing.T) {
 	t.Log("Valid authentication successful")
 }
 
-// TestInvalidAuthentication tests that invalid tokens are rejected
+// TestInvalidAuthentication tests that invalid tokens are rejected.
 func TestInvalidAuthentication(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -127,7 +127,7 @@ func TestInvalidAuthentication(t *testing.T) {
 	t.Log("Invalid authentication correctly rejected")
 }
 
-// TestAuthenticationHeaderFormat tests different auth header formats
+// TestAuthenticationHeaderFormat tests different auth header formats.
 func TestAuthenticationHeaderFormat(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -192,7 +192,7 @@ func TestAuthenticationHeaderFormat(t *testing.T) {
 	}
 }
 
-// TestConcurrentAuthenticatedRequests tests multiple concurrent authenticated requests
+// TestConcurrentAuthenticatedRequests tests multiple concurrent authenticated requests.
 func TestConcurrentAuthenticatedRequests(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,
@@ -212,7 +212,7 @@ func TestConcurrentAuthenticatedRequests(t *testing.T) {
 	hashes := make(chan string, numClients)
 
 	for i := 0; i < numClients; i++ {
-		go func(idx int) {
+		go func(_ int) {
 			client := NewLocalGitRepo()
 			defer client.Close()
 
@@ -253,7 +253,7 @@ func TestConcurrentAuthenticatedRequests(t *testing.T) {
 	t.Logf("All %d concurrent authenticated requests succeeded", successCount)
 }
 
-// TestUnauthorizedEndpointAccess tests accessing endpoints without proper auth
+// TestUnauthorizedEndpointAccess tests accessing endpoints without proper auth.
 func TestUnauthorizedEndpointAccess(t *testing.T) {
 	ts := NewTestServer(&TestServerConfig{
 		RequestAuthorizer: TestRequestAuthorizer,

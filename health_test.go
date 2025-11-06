@@ -27,7 +27,7 @@ import (
 	"github.com/google/goblet/storage"
 )
 
-// Mock storage provider for testing
+// Mock storage provider for testing.
 type mockStorageProvider struct {
 	listError   error
 	listLatency time.Duration
@@ -439,6 +439,7 @@ func TestHealthChecker_ConcurrentChecks(t *testing.T) {
 		resp := <-done
 		if resp == nil {
 			t.Error("Received nil response")
+			continue
 		}
 		if resp.Status != HealthStatusHealthy {
 			t.Errorf("Response %d: Status = %s, want healthy", i, resp.Status)

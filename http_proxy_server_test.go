@@ -267,8 +267,8 @@ func TestHTTPProxyServer_UploadPackHandler_Gzip(t *testing.T) {
 	// Create gzipped request body
 	var buf bytes.Buffer
 	gzWriter := gzip.NewWriter(&buf)
-	gzWriter.Write([]byte("0000")) // Empty git protocol request
-	gzWriter.Close()
+	_, _ = gzWriter.Write([]byte("0000")) // Empty git protocol request
+	_ = gzWriter.Close()
 
 	req := httptest.NewRequest("POST", "/repo.git/git-upload-pack", &buf)
 	req.Header.Set("Git-Protocol", "version=2")

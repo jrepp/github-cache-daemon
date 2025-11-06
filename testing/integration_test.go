@@ -2,18 +2,18 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may obtain a copy of the License at.
 //
 // https://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software.
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
+// See the License for the specific language governing permissions and.
 // limitations under the License.
 
-// Package testing provides integration tests for the Goblet server
-// These tests require Docker to be running and will start a Minio container
+// Package testing provides integration tests for the Goblet server.
+// These tests require Docker to be running and will start a Minio container.
 package testing
 
 import (
@@ -24,13 +24,13 @@ import (
 	"time"
 )
 
-// IntegrationTestSetup manages the Docker Compose environment for integration tests
+// IntegrationTestSetup manages the Docker Compose environment for integration tests.
 type IntegrationTestSetup struct {
 	composeFile string
 	projectName string
 }
 
-// NewIntegrationTestSetup creates a new integration test setup
+// NewIntegrationTestSetup creates a new integration test setup.
 func NewIntegrationTestSetup() *IntegrationTestSetup {
 	return &IntegrationTestSetup{
 		composeFile: "../docker-compose.test.yml",
@@ -38,7 +38,7 @@ func NewIntegrationTestSetup() *IntegrationTestSetup {
 	}
 }
 
-// Start brings up the Docker Compose environment
+// Start brings up the Docker Compose environment.
 func (its *IntegrationTestSetup) Start(t *testing.T) {
 	t.Helper()
 
@@ -80,7 +80,7 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 	time.Sleep(10 * time.Second)
 }
 
-// Stop tears down the Docker Compose environment
+// Stop tears down the Docker Compose environment.
 func (its *IntegrationTestSetup) Stop(t *testing.T) {
 	t.Helper()
 
@@ -96,17 +96,17 @@ func (its *IntegrationTestSetup) Stop(t *testing.T) {
 	}
 }
 
-// GetMinioEndpoint returns the Minio endpoint for tests
+// GetMinioEndpoint returns the Minio endpoint for tests.
 func (its *IntegrationTestSetup) GetMinioEndpoint() string {
 	return "localhost:9000"
 }
 
-// GetMinioCredentials returns the Minio credentials for tests
+// GetMinioCredentials returns the Minio credentials for tests.
 func (its *IntegrationTestSetup) GetMinioCredentials() (accessKey, secretKey string) {
 	return "minioadmin", "minioadmin"
 }
 
-// GetMinioBucket returns the Minio bucket name for tests
+// GetMinioBucket returns the Minio bucket name for tests.
 func (its *IntegrationTestSetup) GetMinioBucket() string {
 	return "goblet-test"
 }
