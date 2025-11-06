@@ -73,11 +73,24 @@ type Config struct {
 
 // NewProvider creates a new storage provider based on configuration.
 func NewProvider(ctx context.Context, config *Config) (Provider, error) {
+	var provider Provider
+	var err error
+
 	switch config.Provider {
 	case "gcs":
-		return NewGCSProvider(ctx, config.GCSBucket)
+		provider, err = NewGCSProvider(ctx, config.GCSBucket)
+		if err != nil {
+			return nil, err
+		}
+		// Wrap with metrics instrumentation
+		return NewMetricsProvider(provider, "gcs"), nil
 	case "s3":
-		return NewS3Provider(ctx, config)
+		provider, err = NewS3Provider(ctx, config)
+		if err != nil {
+			return nil, err
+		}
+		// Wrap with metrics instrumentation
+		return NewMetricsProvider(provider, "s3"), nil
 	default:
 		return nil, nil // No backup configured
 	}
