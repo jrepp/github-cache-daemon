@@ -211,7 +211,7 @@ func TestConcurrentOfflineRequests(t *testing.T) {
 
 	for i := 0; i < numConcurrent; i++ {
 		wg.Add(1)
-		go func(clientNum int) {
+		go func() {
 			defer wg.Done()
 
 			client := NewLocalGitRepo()
@@ -235,7 +235,7 @@ func TestConcurrentOfflineRequests(t *testing.T) {
 					}
 				}
 			}
-		}(i)
+		}()
 	}
 
 	wg.Wait()
@@ -433,10 +433,10 @@ func TestRefPrefixFiltering(t *testing.T) {
 
 	// Create branches in different namespaces
 	branches := map[string]string{
-		"feature/auth":   "HEAD",
-		"feature/ui":     "HEAD",
-		"bugfix/crash":   "HEAD",
-		"release/v1.0":   "HEAD",
+		"feature/auth": "HEAD",
+		"feature/ui":   "HEAD",
+		"bugfix/crash": "HEAD",
+		"release/v1.0": "HEAD",
 	}
 
 	for branch := range branches {

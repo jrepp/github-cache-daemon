@@ -169,6 +169,85 @@ func (r *managedRepository) lsRefsUpstream(command []*gitprotocolio.ProtocolV2Re
 	return chunks, nil
 }
 
+// lsRefsOptions holds parsed ls-refs command options.
+type lsRefsOptions struct {
+	refPrefixes []string
+	symrefs     bool
+}
+
+// parseLsRefsOptions extracts options from ls-refs command.
+func parseLsRefsOptions(command []*gitprotocolio.ProtocolV2RequestChunk) lsRefsOptions {
+	opts := lsRefsOptions{
+		refPrefixes: []string{},
+	}
+	for _, chunk := range command {
+		if chunk.Argument == nil {
+			continue
+		}
+		arg := string(chunk.Argument)
+		if strings.HasPrefix(arg, "ref-prefix ") {
+			prefix := strings.TrimPrefix(arg, "ref-prefix ")
+			opts.refPrefixes = append(opts.refPrefixes, strings.TrimSpace(prefix))
+		} else if arg == "symrefs" {
+			opts.symrefs = true
+		}
+	}
+	return opts
+}
+
+// matchesRefPrefix checks if a ref name matches any of the given prefixes.
+func matchesRefPrefix(refName string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(refName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// addHashRefChunks adds chunks for a hash reference.
+func addHashRefChunks(chunks *[]*gitprotocolio.ProtocolV2ResponseChunk, ref *plumbing.Reference, g *git.Repository, symrefs bool) {
+	refName := ref.Name().String()
+	line := fmt.Sprintf("%s %s\n", ref.Hash().String(), refName)
+	*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+		Response: []byte(line),
+	})
+
+	// Add symref attribute if requested and this is HEAD
+	if symrefs && ref.Name() == plumbing.HEAD {
+		if head, err := g.Head(); err == nil && head.Type() == plumbing.SymbolicReference {
+			attrLine := fmt.Sprintf("symref-target:%s\n", head.Target().String())
+			*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+				Response: []byte(attrLine),
+			})
+		}
+	}
+}
+
+// addSymbolicRefChunks adds chunks for a symbolic reference.
+func addSymbolicRefChunks(chunks *[]*gitprotocolio.ProtocolV2ResponseChunk, ref *plumbing.Reference, g *git.Repository, symrefs bool) {
+	resolved, err := g.Reference(ref.Target(), true)
+	if err != nil {
+		return
+	}
+
+	refName := ref.Name().String()
+	line := fmt.Sprintf("%s %s\n", resolved.Hash().String(), refName)
+	*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+		Response: []byte(line),
+	})
+
+	if symrefs {
+		attrLine := fmt.Sprintf("symref-target:%s\n", ref.Target().String())
+		*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+			Response: []byte(attrLine),
+		})
+	}
+}
+
 // lsRefsLocal reads refs from the local git repository cache.
 // This is used as a fallback when upstream is unavailable or disabled.
 func (r *managedRepository) lsRefsLocal(command []*gitprotocolio.ProtocolV2RequestChunk) ([]*gitprotocolio.ProtocolV2ResponseChunk, error) {
@@ -179,20 +258,7 @@ func (r *managedRepository) lsRefsLocal(command []*gitprotocolio.ProtocolV2Reque
 	}
 
 	// Parse ls-refs command options
-	refPrefixes := []string{}
-	symrefs := false
-	for _, chunk := range command {
-		if chunk.Argument == nil {
-			continue
-		}
-		arg := string(chunk.Argument)
-		if strings.HasPrefix(arg, "ref-prefix ") {
-			prefix := strings.TrimPrefix(arg, "ref-prefix ")
-			refPrefixes = append(refPrefixes, strings.TrimSpace(prefix))
-		} else if arg == "symrefs" {
-			symrefs = true
-		}
-	}
+	opts := parseLsRefsOptions(command)
 
 	// List all refs
 	refs, err := g.References()
@@ -206,50 +272,15 @@ func (r *managedRepository) lsRefsLocal(command []*gitprotocolio.ProtocolV2Reque
 		refName := ref.Name().String()
 
 		// Apply ref-prefix filters if specified
-		if len(refPrefixes) > 0 {
-			matched := false
-			for _, prefix := range refPrefixes {
-				if strings.HasPrefix(refName, prefix) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return nil
-			}
+		if !matchesRefPrefix(refName, opts.refPrefixes) {
+			return nil
 		}
 
-		// Add ref line: "{hash} {refname}\n"
+		// Add ref chunks based on type
 		if ref.Type() == plumbing.HashReference {
-			line := fmt.Sprintf("%s %s\n", ref.Hash().String(), refName)
-			chunks = append(chunks, &gitprotocolio.ProtocolV2ResponseChunk{
-				Response: []byte(line),
-			})
-
-			// Add symref attribute if requested and this is HEAD
-			if symrefs && ref.Name() == plumbing.HEAD {
-				if head, err := g.Head(); err == nil && head.Type() == plumbing.SymbolicReference {
-					attrLine := fmt.Sprintf("symref-target:%s\n", head.Target().String())
-					chunks = append(chunks, &gitprotocolio.ProtocolV2ResponseChunk{
-						Response: []byte(attrLine),
-					})
-				}
-			}
+			addHashRefChunks(&chunks, ref, g, opts.symrefs)
 		} else if ref.Type() == plumbing.SymbolicReference {
-			// Resolve symbolic reference
-			resolved, err := g.Reference(ref.Target(), true)
-			if err == nil {
-				line := fmt.Sprintf("%s %s\n", resolved.Hash().String(), refName)
-				chunks = append(chunks, &gitprotocolio.ProtocolV2ResponseChunk{
-					Response: []byte(line),
-				})
-				if symrefs {
-					attrLine := fmt.Sprintf("symref-target:%s\n", ref.Target().String())
-					chunks = append(chunks, &gitprotocolio.ProtocolV2ResponseChunk{
-						Response: []byte(attrLine),
-					})
-				}
-			}
+			addSymbolicRefChunks(&chunks, ref, g, opts.symrefs)
 		}
 
 		return nil
