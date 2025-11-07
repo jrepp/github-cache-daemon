@@ -177,6 +177,7 @@ func (w *monitoringWriter) Header() http.Header {
 	return w.w.Header()
 }
 
+//nolint:gocyclo // Switch statement for gRPC to HTTP status mapping is inherently complex
 func httpStatusFromCode(code codes.Code) int {
 	switch code {
 	case codes.OK:
