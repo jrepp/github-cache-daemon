@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -91,14 +90,14 @@ func openManagedRepository(config *ServerConfig, u *url.URL) (*managedRepository
 		}
 
 		op := noopOperation{}
-		runGit(op, localDiskPath, "init", "--bare")
-		runGit(op, localDiskPath, "config", "protocol.version", "2")
-		runGit(op, localDiskPath, "config", "uploadpack.allowfilter", "1")
-		runGit(op, localDiskPath, "config", "uploadpack.allowrefinwant", "1")
-		runGit(op, localDiskPath, "config", "repack.writebitmaps", "1")
+		_ = runGit(op, localDiskPath, "init", "--bare")
+		_ = runGit(op, localDiskPath, "config", "protocol.version", "2")
+		_ = runGit(op, localDiskPath, "config", "uploadpack.allowfilter", "1")
+		_ = runGit(op, localDiskPath, "config", "uploadpack.allowrefinwant", "1")
+		_ = runGit(op, localDiskPath, "config", "repack.writebitmaps", "1")
 		// It seems there's a bug in libcurl and HTTP/2 doens't work.
-		runGit(op, localDiskPath, "config", "http.version", "HTTP/1.1")
-		runGit(op, localDiskPath, "remote", "add", "--mirror=fetch", "origin", u.String())
+		_ = runGit(op, localDiskPath, "config", "http.version", "HTTP/1.1")
+		_ = runGit(op, localDiskPath, "remote", "add", "--mirror=fetch", "origin", u.String())
 	}
 
 	return m, nil
@@ -109,13 +108,13 @@ func logStats(command string, startTime time.Time, err error) {
 	if st, ok := status.FromError(err); ok {
 		code = st.Code()
 	}
-	stats.RecordWithTags(context.Background(),
+	_ = stats.RecordWithTags(context.Background(),
 		[]tag.Mutator{
 			tag.Insert(CommandTypeKey, command),
 			tag.Insert(CommandCanonicalStatusKey, code.String()),
 		},
 		OutboundCommandCount.M(1),
-		OutboundCommandProcessingTime.M(int64(time.Now().Sub(startTime)/time.Millisecond)),
+		OutboundCommandProcessingTime.M(int64(time.Since(startTime)/time.Millisecond)),
 	)
 }
 
@@ -139,7 +138,10 @@ func (r *managedRepository) lsRefsUpstream(command []*gitprotocolio.ProtocolV2Re
 	req.Header.Add("Content-Type", "application/x-git-upload-pack-request")
 	req.Header.Add("Accept", "application/x-git-upload-pack-result")
 	req.Header.Add("Git-Protocol", "version=2")
-	t.SetAuthHeader(req)
+	// Only set auth header if we have a valid token
+	if t.AccessToken != "" {
+		t.SetAuthHeader(req)
+	}
 
 	startTime := time.Now()
 	resp, err := http.DefaultClient.Do(req)
@@ -151,7 +153,7 @@ func (r *managedRepository) lsRefsUpstream(command []*gitprotocolio.ProtocolV2Re
 	if resp.StatusCode != http.StatusOK {
 		errMessage := ""
 		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
-			bs, err := ioutil.ReadAll(resp.Body)
+			bs, err := io.ReadAll(resp.Body)
 			if err == nil {
 				errMessage = string(bs)
 			}
@@ -167,6 +169,134 @@ func (r *managedRepository) lsRefsUpstream(command []*gitprotocolio.ProtocolV2Re
 	if err := v2Resp.Err(); err != nil {
 		return nil, fmt.Errorf("cannot parse the upstream response: %v", err)
 	}
+	return chunks, nil
+}
+
+// lsRefsOptions holds parsed ls-refs command options.
+type lsRefsOptions struct {
+	refPrefixes []string
+	symrefs     bool
+}
+
+// parseLsRefsOptions extracts options from ls-refs command.
+func parseLsRefsOptions(command []*gitprotocolio.ProtocolV2RequestChunk) lsRefsOptions {
+	opts := lsRefsOptions{
+		refPrefixes: []string{},
+	}
+	for _, chunk := range command {
+		if chunk.Argument == nil {
+			continue
+		}
+		arg := string(chunk.Argument)
+		if strings.HasPrefix(arg, "ref-prefix ") {
+			prefix := strings.TrimPrefix(arg, "ref-prefix ")
+			opts.refPrefixes = append(opts.refPrefixes, strings.TrimSpace(prefix))
+		} else if arg == "symrefs" {
+			opts.symrefs = true
+		}
+	}
+	return opts
+}
+
+// matchesRefPrefix checks if a ref name matches any of the given prefixes.
+func matchesRefPrefix(refName string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(refName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// addHashRefChunks adds chunks for a hash reference.
+func addHashRefChunks(chunks *[]*gitprotocolio.ProtocolV2ResponseChunk, ref *plumbing.Reference, g *git.Repository, symrefs bool) {
+	refName := ref.Name().String()
+	line := fmt.Sprintf("%s %s\n", ref.Hash().String(), refName)
+	*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+		Response: []byte(line),
+	})
+
+	// Add symref attribute if requested and this is HEAD
+	if symrefs && ref.Name() == plumbing.HEAD {
+		if head, err := g.Head(); err == nil && head.Type() == plumbing.SymbolicReference {
+			attrLine := fmt.Sprintf("symref-target:%s\n", head.Target().String())
+			*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+				Response: []byte(attrLine),
+			})
+		}
+	}
+}
+
+// addSymbolicRefChunks adds chunks for a symbolic reference.
+func addSymbolicRefChunks(chunks *[]*gitprotocolio.ProtocolV2ResponseChunk, ref *plumbing.Reference, g *git.Repository, symrefs bool) {
+	resolved, err := g.Reference(ref.Target(), true)
+	if err != nil {
+		return
+	}
+
+	refName := ref.Name().String()
+	line := fmt.Sprintf("%s %s\n", resolved.Hash().String(), refName)
+	*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+		Response: []byte(line),
+	})
+
+	if symrefs {
+		attrLine := fmt.Sprintf("symref-target:%s\n", ref.Target().String())
+		*chunks = append(*chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+			Response: []byte(attrLine),
+		})
+	}
+}
+
+// lsRefsLocal reads refs from the local git repository cache.
+// This is used as a fallback when upstream is unavailable or disabled.
+func (r *managedRepository) lsRefsLocal(command []*gitprotocolio.ProtocolV2RequestChunk) ([]*gitprotocolio.ProtocolV2ResponseChunk, error) {
+	// Open local git repository
+	g, err := git.PlainOpen(r.localDiskPath)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "local repository not available: %v", err)
+	}
+
+	// Parse ls-refs command options
+	opts := parseLsRefsOptions(command)
+
+	// List all refs
+	refs, err := g.References()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to read local refs: %v", err)
+	}
+
+	// Build response chunks
+	chunks := []*gitprotocolio.ProtocolV2ResponseChunk{}
+	err = refs.ForEach(func(ref *plumbing.Reference) error {
+		refName := ref.Name().String()
+
+		// Apply ref-prefix filters if specified
+		if !matchesRefPrefix(refName, opts.refPrefixes) {
+			return nil
+		}
+
+		// Add ref chunks based on type
+		if ref.Type() == plumbing.HashReference {
+			addHashRefChunks(&chunks, ref, g, opts.symrefs)
+		} else if ref.Type() == plumbing.SymbolicReference {
+			addSymbolicRefChunks(&chunks, ref, g, opts.symrefs)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to iterate refs: %v", err)
+	}
+
+	// Add flush packet to end the response
+	chunks = append(chunks, &gitprotocolio.ProtocolV2ResponseChunk{
+		EndResponse: true,
+	})
+
 	return chunks, nil
 }
 
@@ -200,7 +330,11 @@ func (r *managedRepository) fetchUpstream() (err error) {
 			err = status.Errorf(codes.Internal, "cannot obtain an OAuth2 access token for the server: %v", err)
 			return err
 		}
-		err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "-n", "origin", "refs/heads/*:refs/heads/*", "refs/changes/*:refs/changes/*")
+		if t.AccessToken != "" {
+			err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "-n", "origin", "refs/heads/*:refs/heads/*", "refs/changes/*:refs/changes/*")
+		} else {
+			err = runGit(op, r.localDiskPath, "fetch", "--progress", "-f", "-n", "origin", "refs/heads/*:refs/heads/*", "refs/changes/*:refs/changes/*")
+		}
 	}
 	if err == nil {
 		t, err = r.config.TokenSource.Token()
@@ -208,7 +342,11 @@ func (r *managedRepository) fetchUpstream() (err error) {
 			err = status.Errorf(codes.Internal, "cannot obtain an OAuth2 access token for the server: %v", err)
 			return err
 		}
-		err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "origin")
+		if t.AccessToken != "" {
+			err = runGit(op, r.localDiskPath, "-c", "http.extraHeader=Authorization: Bearer "+t.AccessToken, "fetch", "--progress", "-f", "origin")
+		} else {
+			err = runGit(op, r.localDiskPath, "fetch", "--progress", "-f", "origin")
+		}
 	}
 	logStats("fetch", startTime, err)
 	if err == nil {

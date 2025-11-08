@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package testing provides test utilities for goblet integration tests.
 package testing
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/cgi"
@@ -58,6 +58,7 @@ type TestServer struct {
 	UpstreamServerURL string
 	proxyServer       *httptest.Server
 	ProxyServerURL    string
+	serverConfig      *goblet.ServerConfig // Exposed for testing
 }
 
 type TestServerConfig struct {
@@ -65,26 +66,27 @@ type TestServerConfig struct {
 	TokenSource       oauth2.TokenSource
 	ErrorReporter     func(*http.Request, error)
 	RequestLogger     func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration)
+	UpstreamEnabled   *bool // Optional: set to false to disable upstream (for testing)
 }
 
 func NewTestServer(config *TestServerConfig) *TestServer {
 	s := &TestServer{}
 	{
 		s.UpstreamGitRepo = NewLocalBareGitRepo()
-		s.UpstreamGitRepo.Run("config", "http.receivepack", "1")
-		s.UpstreamGitRepo.Run("config", "uploadpack.allowfilter", "1")
-		s.UpstreamGitRepo.Run("config", "receive.advertisepushoptions", "1")
+		_, _ = s.UpstreamGitRepo.Run("config", "http.receivepack", "1")
+		_, _ = s.UpstreamGitRepo.Run("config", "uploadpack.allowfilter", "1")
+		_, _ = s.UpstreamGitRepo.Run("config", "receive.advertisepushoptions", "1")
 
 		s.upstreamServer = httptest.NewServer(http.HandlerFunc(s.upstreamServerHandler))
 		s.UpstreamServerURL = s.upstreamServer.URL
 	}
 
 	{
-		dir, err := ioutil.TempDir("", "goblet_cache")
+		dir, err := os.MkdirTemp("", "goblet_cache")
 		if err != nil {
 			log.Fatal(err)
 		}
-		config := &goblet.ServerConfig{
+		serverConfig := &goblet.ServerConfig{
 			LocalDiskCacheRoot: dir,
 			URLCanonializer:    s.testURLCanonicalizer,
 			RequestAuthorizer:  config.RequestAuthorizer,
@@ -92,7 +94,21 @@ func NewTestServer(config *TestServerConfig) *TestServer {
 			ErrorReporter:      config.ErrorReporter,
 			RequestLogger:      config.RequestLogger,
 		}
-		s.proxyServer = httptest.NewServer(goblet.HTTPHandler(config))
+		// Set upstream enabled status using thread-safe method
+		if config.UpstreamEnabled != nil {
+			serverConfig.SetUpstreamEnabled(config.UpstreamEnabled)
+		}
+		s.serverConfig = serverConfig // Save for test access
+
+		// Create a mux to handle both health check and git operations
+		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, "ok\n")
+		})
+		mux.Handle("/", goblet.HTTPHandler(serverConfig))
+
+		s.proxyServer = httptest.NewServer(mux)
 		s.ProxyServerURL = s.proxyServer.URL
 	}
 	return s
@@ -154,7 +170,16 @@ func (s *TestServer) CreateRandomCommitUpstream() (string, error) {
 		return "", err
 	}
 
-	_, err = pushClient.Run("-c", "http.extraHeader=Authorization: Bearer "+validServerAuthToken, "push", "-f", s.UpstreamServerURL, "master:master")
+	// Get current branch name or use HEAD
+	branchName, err := pushClient.Run("symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		// If no symbolic ref, push HEAD to master
+		_, err = pushClient.Run("-c", "http.extraHeader=Authorization: Bearer "+validServerAuthToken, "push", "-f", s.UpstreamServerURL, "HEAD:refs/heads/master")
+		return hash, err
+	}
+
+	branchName = strings.TrimSpace(branchName)
+	_, err = pushClient.Run("-c", "http.extraHeader=Authorization: Bearer "+validServerAuthToken, "push", "-f", s.UpstreamServerURL, branchName+":"+branchName)
 	return hash, err
 
 }
@@ -176,25 +201,25 @@ func TestRequestAuthorizer(r *http.Request) error {
 type GitRepo string
 
 func NewLocalBareGitRepo() GitRepo {
-	dir, err := ioutil.TempDir("", "goblet_tmp")
+	dir, err := os.MkdirTemp("", "goblet_tmp")
 	if err != nil {
 		log.Fatal(err)
 	}
 	r := GitRepo(dir)
-	r.Run("init", "--bare")
+	_, _ = r.Run("init", "--bare")
 	return r
 }
 
 func NewLocalGitRepo() GitRepo {
-	dir, err := ioutil.TempDir("", "goblet_tmp")
+	dir, err := os.MkdirTemp("", "goblet_tmp")
 	if err != nil {
 		log.Fatal(err)
 	}
 	r := GitRepo(dir)
-	r.Run("init")
-	r.Run("config", "user.email", "local-root@example.com")
-	r.Run("config", "user.name", "local root")
-	r.Run("config", "protocol.version", "2")
+	_, _ = r.Run("init")
+	_, _ = r.Run("config", "user.email", "local-root@example.com")
+	_, _ = r.Run("config", "user.name", "local root")
+	_, _ = r.Run("config", "protocol.version", "2")
 	return r
 }
 
@@ -213,7 +238,7 @@ func (r GitRepo) CreateRandomCommit() (string, error) {
 	if _, err := r.Run("commit", "--allow-empty", "--message="+time.Now().String()); err != nil {
 		return "", err
 	}
-	return r.Run("rev-parse", "master")
+	return r.Run("rev-parse", "HEAD")
 }
 
 func (r GitRepo) Close() error {

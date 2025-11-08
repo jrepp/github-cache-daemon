@@ -1,0 +1,79 @@
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+    - goconst
+    - gocyclo
+    - godot
+    - gosec
+    - gocritic
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  misspell:
+    locale: US
+  godot:
+    scope: declarations
+    capital: true
+  staticcheck:
+    checks: ["all", "-SA1019"]
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - gosec
+        - goconst
+    - path: testing/
+      linters:
+        - gosec
+    # Exclude deprecated import warnings until dependencies are updated
+    - text: "SA1019"
+      linters:
+        - staticcheck
+    # Exclude ifElseChain style suggestions (often less readable as switch)
+    - linters:
+        - gocritic
+      text: "ifElseChain"
+    # Exclude exitAfterDefer in main function (acceptable for startup code)
+    - path: goblet-server/main\.go
+      linters:
+        - gocritic
+      text: "exitAfterDefer"
+    # Exclude high complexity warnings for known complex functions
+    - path: git_protocol_v2_handler\.go
+      linters:
+        - gocyclo
+      text: "handleV2Command"
+    - path: goblet-server/main\.go
+      linters:
+        - gocyclo
+      text: "main"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  formats: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true

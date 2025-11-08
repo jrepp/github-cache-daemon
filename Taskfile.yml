@@ -1,0 +1,702 @@
+version: '3'
+
+vars:
+  BINARY_NAME: goblet-server
+  BUILD_DIR: ./build
+  MAIN_PACKAGE: ./goblet-server
+  PLATFORMS:
+    sh: echo "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  install-tools:
+    desc: Install required development tools
+    cmds:
+      - go install golang.org/x/tools/cmd/goimports@latest
+      - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - go install honnef.co/go/tools/cmd/staticcheck@latest
+    silent: false
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - go clean -cache -testcache -modcache
+
+  tidy:
+    desc: Tidy and verify go.mod
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+      - goimports -w .
+
+  fmt-check:
+    desc: Check if code is formatted
+    cmds:
+      - |
+        if [ -n "$(gofmt -l .)" ]; then
+          echo "The following files are not formatted:"
+          gofmt -l .
+          exit 1
+        fi
+      - |
+        if [ -n "$(goimports -l .)" ]; then
+          echo "The following files need import formatting:"
+          goimports -l .
+          exit 1
+        fi
+
+  tidy-check:
+    desc: Check if go.mod is tidy
+    cmds:
+      - |
+        go mod tidy
+        if [ -n "$(git diff go.mod go.sum)" ]; then
+          echo "go.mod or go.sum is not tidy"
+          git diff go.mod go.sum
+          exit 1
+        fi
+
+  lint:
+    desc: Run linters
+    cmds:
+      - golangci-lint run --timeout 5m
+      - staticcheck -checks 'all,-SA1019' ./...
+      - go vet ./...
+
+  # Unit Tests (no Docker required - safe for CI)
+  test-unit:
+    desc: Run unit tests only (no Docker required, safe for CI)
+    cmds:
+      - go test -short -v -race -coverprofile=coverage-unit.out ./...
+      - echo "✓ Unit tests passed"
+
+  test:
+    desc: Run unit tests (alias for test-unit)
+    cmds:
+      - task: test-unit
+
+  test-short:
+    desc: Run unit tests without race detector (fast)
+    cmds:
+      - go test -short -v ./...
+
+  # Integration Tests (require Docker containers)
+  test-integration-go:
+    desc: Run Go integration tests (requires Docker, ./testing/...)
+    deps: [docker-test-up]
+    cmds:
+      - sleep 10  # Wait for services to be ready
+      - echo "==> Running Go integration tests..."
+      - go test -v -race -coverprofile=coverage-integration.out ./testing/...
+      - defer: { task: docker-test-down }
+      - echo "==> ✓ Go integration tests passed!"
+
+  test-integration-oidc:
+    desc: Run OIDC end-to-end integration tests (requires Docker dev environment)
+    cmds:
+      - echo "==> Running OIDC integration tests..."
+      - task: test-oidc
+      - echo "==> ✓ OIDC integration tests passed!"
+
+  test-integration-all:
+    desc: Run all integration tests (Go + OIDC, requires Docker)
+    cmds:
+      - echo "==> Running all integration tests..."
+      - task: test-integration-go
+      - task: test-integration-oidc
+      - echo "==> ✓ All integration tests passed!"
+
+  test-integration:
+    desc: Run all integration tests (alias for test-integration-all)
+    cmds:
+      - task: test-integration-all
+
+  integration:
+    desc: Full integration test cycle (clean, build, test with Docker)
+    cmds:
+      - echo "==> Starting full integration test cycle..."
+      - echo "==> Cleaning up any existing test containers..."
+      - |
+        # Force remove any existing test containers
+        docker rm -f goblet-minio goblet-minio-setup 2>/dev/null || true
+        docker ps -a | grep goblet-minio | awk '{print $1}' | xargs docker rm -f 2>/dev/null || true
+      - task: docker-test-down
+      - echo "==> Starting Docker Compose test environment..."
+      - task: docker-test-up
+      - echo "==> Waiting for services to be ready..."
+      - sleep 12
+      - echo "==> Running Go integration tests..."
+      - go test -v -race -coverprofile=coverage-integration.out ./testing/...
+      - defer: { task: docker-test-down }
+      - echo "==> ✓ Integration tests completed!"
+
+  test-parallel:
+    desc: Run Go integration tests in parallel (requires Docker)
+    deps: [docker-test-up]
+    cmds:
+      - sleep 10
+      - go test -v -race -parallel 8 -timeout 10m ./testing/...
+      - defer: { task: docker-test-down }
+
+  test-watch:
+    desc: Watch for changes and run tests
+    cmds:
+      - |
+        while true; do
+          go test -short -v ./...
+          fswatch -1 -r . --exclude '.git' --exclude 'build' --include '\.go$'
+        done
+
+  coverage:
+    desc: Generate and view test coverage
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - open coverage.html
+
+  build:
+    desc: Build for current platform
+    cmds:
+      - go build -v -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.MAIN_PACKAGE}}
+
+  build-all:
+    desc: Build for all platforms
+    deps: [clean]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - task: build-multi-arch
+
+  build-multi-arch:
+    desc: Build for multiple architectures
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          GOOS=$(echo $platform | cut -d'/' -f1)
+          GOARCH=$(echo $platform | cut -d'/' -f2)
+          output_name="{{.BUILD_DIR}}/{{.BINARY_NAME}}-${GOOS}-${GOARCH}"
+
+          if [ "$GOOS" = "windows" ]; then
+            output_name="${output_name}.exe"
+          fi
+
+          echo "Building for $GOOS/$GOARCH..."
+          GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build \
+            -ldflags="-w -s" \
+            -trimpath \
+            -o "$output_name" \
+            {{.MAIN_PACKAGE}}
+
+          if [ $? -ne 0 ]; then
+            echo "Failed to build for $GOOS/$GOARCH"
+            exit 1
+          fi
+        done
+
+  build-linux-amd64:
+    desc: Build for Linux AMD64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}} || true
+      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -trimpath -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 {{.MAIN_PACKAGE}}
+
+  build-linux-arm64:
+    desc: Build for Linux ARM64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}} || true
+      - GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-w -s" -trimpath -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 {{.MAIN_PACKAGE}}
+
+  build-darwin-amd64:
+    desc: Build for macOS AMD64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}} || true
+      - GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -trimpath -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 {{.MAIN_PACKAGE}}
+
+  build-darwin-arm64:
+    desc: Build for macOS ARM64 (Apple Silicon)
+    cmds:
+      - mkdir -p {{.BUILD_DIR}} || true
+      - GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-w -s" -trimpath -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 {{.MAIN_PACKAGE}}
+
+  docker-build:
+    desc: Build Docker image for current platform (using pre-built binary)
+    deps: [build-linux-amd64]
+    cmds:
+      - docker build -t goblet-server:latest .
+
+  docker-build-arm64:
+    desc: Build Docker image for ARM64 (using pre-built binary)
+    deps: [build-linux-arm64]
+    cmds:
+      - docker build --build-arg ARCH=arm64 -t goblet-server:arm64 .
+
+  docker-build-from-source:
+    desc: Build Docker image from source (slower, no pre-built binary needed)
+    cmds:
+      - docker build -f Dockerfile.build -t goblet-server:latest .
+
+  docker-build-multi:
+    desc: Build multi-arch Docker images using buildx
+    deps: [build-linux-amd64, build-linux-arm64]
+    cmds:
+      - docker buildx create --use --name goblet-builder || true
+      - docker buildx build --platform linux/amd64,linux/arm64 -t goblet-server:latest --load .
+
+  up:
+    desc: Start Docker Compose services (basic profile - no OIDC)
+    cmds:
+      - docker compose up -d
+      - echo "Services started. Access goblet at http://localhost:8888"
+      - echo "Metrics at http://localhost:8888/metrics"
+      - echo "Health at http://localhost:8888/healthz"
+
+  up-dev:
+    desc: Start Docker Compose services with OIDC (dev profile)
+    cmds:
+      - docker compose --profile dev up -d
+      - echo "Dev services started with OIDC. Access goblet at http://localhost:8890"
+      - echo "Metrics at http://localhost:8890/metrics"
+      - echo "Health at http://localhost:8890/healthz"
+      - echo "Dex OIDC at http://localhost:5556"
+
+  down:
+    desc: Stop Docker Compose services (all profiles)
+    cmds:
+      - docker compose --profile dev --profile test down -v
+
+  docker-up:
+    desc: Start Docker Compose services (alias for up-dev)
+    cmds:
+      - task: up-dev
+
+  docker-down:
+    desc: Stop Docker Compose services (alias for down)
+    cmds:
+      - task: down
+
+  docker-logs:
+    desc: View Docker Compose logs (dev profile)
+    cmds:
+      - docker compose --profile dev logs -f
+
+  docker-test-up:
+    desc: Start Docker Compose test environment (test profile)
+    cmds:
+      - docker compose --profile test up -d
+      - echo "Waiting for services to be healthy..."
+      - |
+        timeout 60 sh -c '
+          until docker compose --profile test ps | grep -q "healthy\|Up"; do
+            echo "Waiting for services..."
+            sleep 2
+          done
+        ' || echo "Services started (timeout check)"
+
+  docker-test-down:
+    desc: Stop Docker Compose test environment (test profile)
+    cmds:
+      - docker compose --profile test down -v
+
+  docker-test-logs:
+    desc: View test environment logs
+    cmds:
+      - docker compose --profile test logs -f
+
+  check:
+    desc: Run all checks (fmt, tidy, lint, unit tests - no Docker)
+    cmds:
+      - task: fmt-check
+      - task: tidy-check
+      - task: lint
+      - task: test-unit
+      - echo "✓ All checks passed!"
+
+  int:
+    desc: Full end-to-end integration test cycle (build, run, test with Docker)
+    cmds:
+      - echo "==> Starting full integration test cycle..."
+      - task: fmt
+      - task: lint
+      - task: build-linux-amd64
+      - task: docker-test-down  # Ensure clean state
+      - task: docker-test-up
+      - sleep 12  # Wait for services
+      - task: test-integration-go
+      - task: docker-test-down
+      - echo "==> ✓ Integration tests completed successfully!"
+
+  ci:
+    desc: Run CI pipeline (checks + build + unit tests - no Docker required)
+    cmds:
+      - echo "==> Running CI pipeline (no Docker required)..."
+      - task: fmt-check
+      - task: tidy-check
+      - task: lint
+      - task: test-unit
+      - task: build
+      - echo "==> ✓ CI pipeline passed!"
+
+  ci-full:
+    desc: Run full CI with integration tests (requires Docker)
+    cmds:
+      - echo "==> Running full CI pipeline (this may take several minutes)..."
+      - task: fmt-check
+      - task: tidy-check
+      - task: lint
+      - task: test-unit
+      - task: build-all
+      - task: int
+      - echo "==> ✓ Full CI pipeline passed!"
+
+  ci-local:
+    desc: Run complete CI pipeline locally (same as GitHub Actions)
+    cmds:
+      - echo "==> Running complete local CI (simulates GitHub Actions)..."
+      - task: install-tools
+      - task: deps
+      - task: ci-full
+      - echo "==> ✓ Local CI complete - ready to push!"
+
+  pre-commit:
+    desc: Run pre-commit checks (no Docker required)
+    cmds:
+      - task: fmt
+      - task: tidy
+      - task: lint
+      - task: test-unit
+
+  deps:
+    desc: Download dependencies
+    cmds:
+      - go mod download
+
+  upgrade-deps:
+    desc: Upgrade all dependencies to latest
+    cmds:
+      - go get -u all
+      - go mod tidy
+
+  run:
+    desc: Run the server locally
+    cmds:
+      - go run {{.MAIN_PACKAGE}} -cache_root=/tmp/goblet-cache
+
+  run-minio:
+    desc: Run with Minio backend
+    cmds:
+      - |
+        go run {{.MAIN_PACKAGE}} \
+          -cache_root=/tmp/goblet-cache \
+          -storage_provider=s3 \
+          -s3_endpoint=localhost:9000 \
+          -s3_bucket=goblet-backups \
+          -s3_access_key=minioadmin \
+          -s3_secret_key=minioadmin \
+          -s3_region=us-east-1 \
+          -backup_manifest_name=dev
+
+  help:
+    desc: Show help
+    cmds:
+      - task --list-all
+
+  ci-quick:
+    desc: Quick CI check (fmt, lint, unit tests - fast feedback, no Docker)
+    cmds:
+      - echo "==> Running quick CI checks..."
+      - task: fmt-check
+      - task: lint
+      - task: test-short
+      - echo "==> ✓ Quick checks passed!"
+
+  # OIDC Integration Tests
+  test-oidc:
+    desc: Run end-to-end OIDC integration tests against running environment
+    vars:
+      GOBLET_URL: http://localhost:8890
+      TEST_REPO: github.com/google/goblet
+      VOLUME_NAME: github-cache-daemon_goblet_tokens
+    cmds:
+      - echo "🧪 Starting OIDC Integration Tests"
+      - echo "   Goblet URL{{":"}} {{.GOBLET_URL}}"
+      - echo "   Test Repo{{":"}} {{.TEST_REPO}}"
+      - echo ""
+      - task: test-oidc-services
+      - task: test-oidc-token
+      - task: test-oidc-health
+      - task: test-oidc-metrics
+      - task: test-oidc-auth
+      - task: test-oidc-git
+      - task: test-oidc-summary
+
+  test-oidc-services:
+    desc: Verify Docker Compose services are running
+    internal: true
+    silent: true
+    cmds:
+      - echo "Test 1{{":"}} Verify services are running"
+      - |
+        SERVICES="goblet-token-generator goblet-server goblet-dex goblet-minio"
+        ALL_RUNNING=true
+        for service in $SERVICES; do
+          if docker ps | grep -q "$service"; then
+            echo "  ✓ $service is running"
+          else
+            echo "  ✗ $service is NOT running"
+            ALL_RUNNING=false
+          fi
+        done
+        if [ "$ALL_RUNNING" = "true" ]; then
+          echo "✓ PASS: All services running"
+        else
+          echo "✗ FAIL: Not all services running"
+          exit 1
+        fi
+      - echo ""
+
+  test-oidc-token:
+    desc: Retrieve and validate bearer token
+    internal: true
+    silent: true
+    vars:
+      VOLUME_NAME: github-cache-daemon_goblet_tokens
+    cmds:
+      - echo "Test 2{{":"}} Retrieve bearer token"
+      - |
+        TOKEN=$(docker run --rm -v {{.VOLUME_NAME}}:/tokens alpine cat /tokens/token.json 2>/dev/null | jq -r .access_token 2>/dev/null)
+        if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+          echo "  Token: ${TOKEN:0:30}..."
+          echo "✓ PASS: Token retrieved"
+          echo "$TOKEN" > /tmp/goblet-test-token
+        else
+          echo "✗ FAIL: Failed to get token"
+          exit 1
+        fi
+      - echo ""
+
+  test-oidc-health:
+    desc: Test health and metrics endpoints
+    internal: true
+    silent: true
+    vars:
+      GOBLET_URL: http://localhost:8890
+    cmds:
+      - echo "Test 3{{":"}} Health endpoint"
+      - |
+        if curl -sf {{.GOBLET_URL}}/healthz | grep -q "ok"; then
+          echo "✓ PASS: Health endpoint"
+        else
+          echo "✗ FAIL: Health endpoint"
+          exit 1
+        fi
+      - echo ""
+
+  test-oidc-metrics:
+    desc: Test metrics endpoint
+    internal: true
+    silent: true
+    vars:
+      GOBLET_URL: http://localhost:8890
+    cmds:
+      - echo "Test 4{{":"}} Metrics endpoint"
+      - |
+        if curl -sf {{.GOBLET_URL}}/metrics | grep -q "goblet_"; then
+          echo "✓ PASS: Metrics endpoint"
+        else
+          echo "✗ FAIL: Metrics endpoint"
+          exit 1
+        fi
+      - echo ""
+
+  test-oidc-auth:
+    desc: Test authentication flows
+    internal: true
+    silent: true
+    vars:
+      GOBLET_URL: http://localhost:8890
+      TEST_REPO: github.com/google/goblet
+    cmds:
+      - echo "Test 5{{":"}} Authentication without token (expect 401)"
+      - |
+        if curl -i {{.GOBLET_URL}}/{{.TEST_REPO}}/info/refs?service=git-upload-pack 2>&1 | grep -q "401 Unauthorized"; then
+          echo "✓ PASS: Correctly returns 401"
+        else
+          echo "✗ FAIL: Should return 401"
+          exit 1
+        fi
+      - echo ""
+      - echo "Test 6{{":"}} Authentication with invalid token (expect 401)"
+      - |
+        if curl -i -H "Authorization: Bearer invalid-token" {{.GOBLET_URL}}/{{.TEST_REPO}}/info/refs?service=git-upload-pack 2>&1 | grep -q "401 Unauthorized"; then
+          echo "✓ PASS: Rejects invalid token"
+        else
+          echo "✗ FAIL: Should reject invalid token"
+          exit 1
+        fi
+      - echo ""
+      - echo "Test 7{{":"}} Valid token without Git-Protocol (expect 400)"
+      - |
+        TOKEN=$(cat /tmp/goblet-test-token)
+        if curl -i -H "Authorization: Bearer $TOKEN" {{.GOBLET_URL}}/{{.TEST_REPO}}/info/refs?service=git-upload-pack 2>&1 | grep -q "400 Bad Request"; then
+          echo "✓ PASS: Requires Git protocol v2"
+        else
+          echo "✗ FAIL: Should require Git protocol"
+          exit 1
+        fi
+      - echo ""
+      - echo "Test 8{{":"}} Full authentication (expect 200)"
+      - |
+        TOKEN=$(cat /tmp/goblet-test-token)
+        if curl -i -H "Authorization: Bearer $TOKEN" -H "Git-Protocol: version=2" {{.GOBLET_URL}}/{{.TEST_REPO}}/info/refs?service=git-upload-pack 2>&1 | grep -q "200 OK"; then
+          echo "✓ PASS: Full authentication"
+        else
+          echo "✗ FAIL: Authentication failed"
+          exit 1
+        fi
+      - echo ""
+
+  test-oidc-git:
+    desc: Test Git operations
+    internal: true
+    silent: true
+    vars:
+      GOBLET_URL: http://localhost:8890
+      TEST_REPO: github.com/google/goblet
+    cmds:
+      - echo "Test 9{{":"}} git ls-remote"
+      - |
+        TOKEN=$(cat /tmp/goblet-test-token)
+        if git -c "http.extraHeader=Authorization: Bearer $TOKEN" ls-remote {{.GOBLET_URL}}/{{.TEST_REPO}} HEAD 2>&1 | grep -qE "^[0-9a-f]{40}"; then
+          HASH=$(git -c "http.extraHeader=Authorization: Bearer $TOKEN" ls-remote {{.GOBLET_URL}}/{{.TEST_REPO}} HEAD | awk '{print $1}')
+          echo "  HEAD: $HASH"
+          echo "✓ PASS: git ls-remote"
+        else
+          echo "✗ FAIL: git ls-remote failed"
+          exit 1
+        fi
+      - echo ""
+      - echo "Test 10{{":"}} git clone --depth=1"
+      - |
+        TOKEN=$(cat /tmp/goblet-test-token)
+        TEST_DIR="/tmp/goblet-test-$$"
+        rm -rf "$TEST_DIR"
+        if git -c "http.extraHeader=Authorization: Bearer $TOKEN" clone --depth=1 {{.GOBLET_URL}}/{{.TEST_REPO}} "$TEST_DIR" 2>&1; then
+          if [ -d "$TEST_DIR/.git" ]; then
+            COUNT=$(cd "$TEST_DIR" && git rev-list --count HEAD)
+            echo "  Cloned with $COUNT commit(s)"
+            rm -rf "$TEST_DIR"
+            echo "✓ PASS: git clone"
+          else
+            rm -rf "$TEST_DIR"
+            echo "✗ FAIL: No .git directory"
+            exit 1
+          fi
+        else
+          rm -rf "$TEST_DIR"
+          echo "✗ FAIL: git clone failed"
+          exit 1
+        fi
+      - echo ""
+      - echo "Test 11{{":"}} Verify metrics populated"
+      - |
+        if curl -sf {{.GOBLET_URL}}/metrics | grep -q "inbound_command_count"; then
+          echo "✓ PASS: Metrics populated"
+        else
+          echo "✗ FAIL: Metrics not found"
+          exit 1
+        fi
+      - echo ""
+      - echo "Test 12{{":"}} Check server logs"
+      - |
+        if docker logs goblet-server 2>&1 | tail -20 | grep -qi "fatal\|panic"; then
+          echo "✗ FAIL: Fatal errors in logs"
+          exit 1
+        else
+          echo "✓ PASS: No fatal errors"
+        fi
+      - echo ""
+
+  test-oidc-summary:
+    desc: Display test summary
+    internal: true
+    silent: true
+    cmds:
+      - |
+        echo "=========================================="
+        echo "✓ All OIDC Integration Tests Passed!"
+        echo "=========================================="
+        echo ""
+        echo "Tests completed:"
+        echo "  ✓ Services running"
+        echo "  ✓ Token retrieval"
+        echo "  ✓ Health endpoint"
+        echo "  ✓ Metrics endpoint"
+        echo "  ✓ Auth without token (401)"
+        echo "  ✓ Auth with invalid token (401)"
+        echo "  ✓ Auth without protocol (400)"
+        echo "  ✓ Full authentication (200)"
+        echo "  ✓ git ls-remote"
+        echo "  ✓ git clone"
+        echo "  ✓ Metrics populated"
+        echo "  ✓ Server logs clean"
+        echo ""
+      - rm -f /tmp/goblet-test-token
+
+  validate-token:
+    desc: Validate token is accessible on mount
+    cmds:
+      - bash scripts/validate-token-mount.sh
+
+  get-token:
+    desc: Get bearer token from Docker volume
+    vars:
+      FORMAT: access_token
+    cmds:
+      - bash scripts/get-token.sh {{.FORMAT}}
+
+  # GoReleaser tasks for release management
+  release-check:
+    desc: Validate GoReleaser configuration
+    cmds:
+      - |
+        if ! command -v goreleaser &> /dev/null; then
+          echo "❌ GoReleaser not found. Install it with:"
+          echo "  brew install goreleaser (macOS)"
+          echo "  go install github.com/goreleaser/goreleaser@latest"
+          exit 1
+        fi
+      - goreleaser check
+      - echo "✓ GoReleaser configuration is valid"
+
+  release-snapshot:
+    desc: Build release snapshot (all platforms, no publish)
+    deps: [release-check]
+    cmds:
+      - echo "Building release snapshot..."
+      - goreleaser build --snapshot --clean
+      - echo "✓ Binaries built in dist/ directory"
+      - ls -lh dist/
+
+  release-test:
+    desc: Test full release process (no publish)
+    deps: [release-check]
+    cmds:
+      - echo "Testing full release process..."
+      - goreleaser release --snapshot --clean --skip=publish
+      - echo "✓ Release test complete"
+      - echo ""
+      - echo "Generated artifacts:"
+      - ls -lh dist/*.tar.gz dist/*.zip dist/checksums.txt 2>/dev/null || true
+
+  release-local:
+    desc: Build and test locally (alias for release-test)
+    cmds:
+      - task: release-test

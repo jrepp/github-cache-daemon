@@ -29,9 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/storage"
 	"github.com/google/goblet"
-	"google.golang.org/api/iterator"
+	"github.com/google/goblet/storage"
 )
 
 const (
@@ -42,9 +41,9 @@ const (
 	backupFrequency = time.Hour
 )
 
-func RunBackupProcess(config *goblet.ServerConfig, bh *storage.BucketHandle, manifestName string, logger *log.Logger) {
+func RunBackupProcess(config *goblet.ServerConfig, provider storage.Provider, manifestName string, logger *log.Logger) {
 	rw := &backupReaderWriter{
-		bucketHandle: bh,
+		provider:     provider,
 		manifestName: manifestName,
 		config:       config,
 		logger:       logger,
@@ -53,17 +52,15 @@ func RunBackupProcess(config *goblet.ServerConfig, bh *storage.BucketHandle, man
 	go func() {
 		timer := time.NewTimer(backupFrequency)
 		for {
-			select {
-			case <-timer.C:
-				rw.saveBackup()
-			}
+			<-timer.C
+			rw.saveBackup()
 			timer.Reset(backupFrequency)
 		}
 	}()
 }
 
 type backupReaderWriter struct {
-	bucketHandle *storage.BucketHandle
+	provider     storage.Provider
 	manifestName string
 	config       *goblet.ServerConfig
 	logger       *log.Logger
@@ -71,12 +68,12 @@ type backupReaderWriter struct {
 
 func (b *backupReaderWriter) recoverFromBackup() {
 	repos := b.readRepoList()
-	if repos == nil || len(repos) == 0 {
+	if len(repos) == 0 {
 		b.logger.Print("No repositories found from backup")
 		return
 	}
 
-	for rawURL, _ := range repos {
+	for rawURL := range repos {
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			b.logger.Printf("Cannot parse %s as a URL. Skipping", rawURL)
@@ -95,20 +92,17 @@ func (b *backupReaderWriter) recoverFromBackup() {
 			continue
 		}
 
-		m.RecoverFromBundle(bundlePath)
-		os.Remove(bundlePath)
+		_ = m.RecoverFromBundle(bundlePath)
+		_ = os.Remove(bundlePath)
 	}
 }
 
 func (b *backupReaderWriter) readRepoList() map[string]bool {
-	it := b.bucketHandle.Objects(context.Background(), &storage.Query{
-		Delimiter: "/",
-		Prefix:    path.Join(gobletRepoManifestDir, b.manifestName) + "/",
-	})
+	it := b.provider.List(context.Background(), path.Join(gobletRepoManifestDir, b.manifestName)+"/")
 	repos := map[string]bool{}
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if err == io.EOF {
 			break
 		}
 		if err != nil {
@@ -125,7 +119,7 @@ func (b *backupReaderWriter) readRepoList() map[string]bool {
 }
 
 func (b *backupReaderWriter) readManifest(name string, m map[string]bool) {
-	rc, err := b.bucketHandle.Object(name).NewReader(context.Background())
+	rc, err := b.provider.Reader(context.Background(), name)
 	if err != nil {
 		b.logger.Printf("Cannot open a manifest file %s. Skipping: %v", name, err)
 		return
@@ -147,7 +141,7 @@ func (b *backupReaderWriter) downloadBackupBundle(name string) (string, error) {
 		return "", fmt.Errorf("cannot find the bundle for %s: %v", name, err)
 	}
 
-	rc, err := b.bucketHandle.Object(name).NewReader(context.Background())
+	rc, err := b.provider.Reader(context.Background(), name)
 	if err != nil {
 		return "", err
 	}
@@ -175,7 +169,7 @@ func (b *backupReaderWriter) saveBackup() {
 			b.logger.Printf("cannot GC bundles for %s. Skipping: %v", u.String(), err)
 			return
 		}
-		// The bundle timestmap is seconds precision.
+		// The bundle timestamp is seconds precision.
 		if latestBundleSecPrecision.Unix() >= m.LastUpdateTime().Unix() {
 			b.logger.Printf("existing bundle for %s is up-to-date %s", u.String(), latestBundleSecPrecision.Format(time.RFC3339))
 		} else if err := b.backupManagedRepo(m); err != nil {
@@ -198,13 +192,10 @@ func (b *backupReaderWriter) saveBackup() {
 
 func (b *backupReaderWriter) gcBundle(name string) (time.Time, string, error) {
 	names := []string{}
-	it := b.bucketHandle.Objects(context.Background(), &storage.Query{
-		Delimiter: "/",
-		Prefix:    name + "/",
-	})
+	it := b.provider.List(context.Background(), name+"/")
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if err == io.EOF {
 			break
 		}
 		if err != nil {
@@ -232,8 +223,8 @@ func (b *backupReaderWriter) gcBundle(name string) (time.Time, string, error) {
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(bundles)))
 
-	for _, name := range bundles[1:len(bundles)] {
-		b.bucketHandle.Object(name).Delete(context.Background())
+	for _, name := range bundles[1:] {
+		_ = b.provider.Delete(context.Background(), name)
 	}
 	n, _ := strconv.ParseInt(path.Base(bundles[0]), 10, 64)
 	return time.Unix(n, 0), bundles[0], nil
@@ -246,11 +237,14 @@ func (b *backupReaderWriter) backupManagedRepo(m goblet.ManagedRepository) error
 	ctx, cf := context.WithCancel(context.Background())
 	defer cf()
 
-	wc := b.bucketHandle.Object(bundleFile).NewWriter(ctx)
+	wc, err := b.provider.Writer(ctx, bundleFile)
+	if err != nil {
+		return err
+	}
 	if err := m.WriteBundle(wc); err != nil {
 		return err
 	}
-	// Closing here will commit the file. Otherwise, the cancelled context
+	// Closing here will commit the file. Otherwise, the canceled context
 	// will discard the file.
 	wc.Close()
 	return nil
@@ -260,13 +254,16 @@ func (b *backupReaderWriter) writeManifestFile(manifestFile string, urls []strin
 	ctx, cf := context.WithCancel(context.Background())
 	defer cf()
 
-	wc := b.bucketHandle.Object(manifestFile).NewWriter(ctx)
+	wc, err := b.provider.Writer(ctx, manifestFile)
+	if err != nil {
+		return err
+	}
 	for _, url := range urls {
 		if _, err := io.WriteString(wc, url+"\n"); err != nil {
 			return err
 		}
 	}
-	// Closing here will commit the file. Otherwise, the cancelled context
+	// Closing here will commit the file. Otherwise, the canceled context
 	// will discard the file.
 	wc.Close()
 	return nil
@@ -274,13 +271,10 @@ func (b *backupReaderWriter) writeManifestFile(manifestFile string, urls []strin
 
 func (b *backupReaderWriter) garbageCollectOldManifests(now time.Time) {
 	threshold := now.Add(-manifestCleanUpDuration)
-	it := b.bucketHandle.Objects(context.Background(), &storage.Query{
-		Delimiter: "/",
-		Prefix:    path.Join(gobletRepoManifestDir, b.manifestName) + "/",
-	})
+	it := b.provider.List(context.Background(), path.Join(gobletRepoManifestDir, b.manifestName)+"/")
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if err == io.EOF {
 			break
 		}
 		if err != nil {
@@ -297,7 +291,7 @@ func (b *backupReaderWriter) garbageCollectOldManifests(now time.Time) {
 		}
 		t := time.Unix(sec, 0)
 		if t.Before(threshold) {
-			b.bucketHandle.Object(attrs.Name).Delete(context.Background())
+			_ = b.provider.Delete(context.Background(), attrs.Name)
 		}
 	}
 }

@@ -28,16 +28,19 @@ import (
 
 	"cloud.google.com/go/errorreporting"
 	"cloud.google.com/go/logging"
-	"cloud.google.com/go/storage"
+	"contrib.go.opencensus.io/exporter/prometheus"
 	"contrib.go.opencensus.io/exporter/stackdriver"
 	"github.com/google/goblet"
+	"github.com/google/goblet/auth/oidc"
 	googlehook "github.com/google/goblet/google"
+	"github.com/google/goblet/storage"
 	"github.com/google/uuid"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	logpb "google.golang.org/genproto/googleapis/logging/v2"
+	logpb "google.golang.org/genproto/googleapis/logging/v2" //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 )
 
 const (
@@ -52,8 +55,26 @@ var (
 	stackdriverProject      = flag.String("stackdriver_project", "", "GCP project ID used for the Stackdriver integration")
 	stackdriverLoggingLogID = flag.String("stackdriver_logging_log_id", "", "Stackdriver logging Log ID")
 
-	backupBucketName   = flag.String("backup_bucket_name", "", "Name of the GCS bucket for backed-up repositories")
+	// Authentication configuration.
+	authMode         = flag.String("auth_mode", "", "Authentication mode: 'google' or 'oidc' (default from AUTH_MODE env or 'google')")
+	oidcIssuer       = flag.String("oidc_issuer", "", "OIDC issuer URL (e.g., http://dex:5556/dex)")
+	oidcClientID     = flag.String("oidc_client_id", "", "OIDC client ID")
+	oidcClientSecret = flag.String("oidc_client_secret", "", "OIDC client secret")
+
+	// Storage provider configuration.
+	storageProvider = flag.String("storage_provider", "", "Storage provider: 'gcs' or 's3'")
+
+	// GCS configuration.
+	backupBucketName   = flag.String("backup_bucket_name", "", "Name of the GCS bucket for backed-up repositories (GCS only)")
 	backupManifestName = flag.String("backup_manifest_name", "", "Name of the backup manifest")
+
+	// S3/Minio configuration.
+	s3Endpoint        = flag.String("s3_endpoint", "", "S3 endpoint (e.g., localhost:9000 for Minio)")
+	s3Bucket          = flag.String("s3_bucket", "", "S3 bucket name")
+	s3AccessKeyID     = flag.String("s3_access_key", "", "S3 access key ID")
+	s3SecretAccessKey = flag.String("s3_secret_key", "", "S3 secret access key")
+	s3Region          = flag.String("s3_region", "us-east-1", "S3 region")
+	s3UseSSL          = flag.Bool("s3_use_ssl", false, "Use SSL for S3 connections")
 
 	latencyDistributionAggregation = view.Distribution(
 		100,
@@ -117,32 +138,105 @@ var (
 
 func main() {
 	flag.Parse()
+	log.Printf("Parsed flags - port: %d, auth_mode: %s", *port, *authMode)
 
-	ts, err := google.DefaultTokenSource(context.Background(), scopeCloudPlatform, scopeUserInfoEmail)
-	if err != nil {
-		log.Fatalf("Cannot initialize the OAuth2 token source: %v", err)
+	// Read environment variables if flags not set or use defaults
+	if *authMode == "" {
+		*authMode = getEnv("AUTH_MODE", "google")
 	}
-	authorizer, err := googlehook.NewRequestAuthorizer(ts)
-	if err != nil {
-		log.Fatalf("Cannot create a request authorizer: %v", err)
+	log.Printf("Starting with auth_mode: %s", *authMode)
+	if *oidcIssuer == "" {
+		*oidcIssuer = os.Getenv("OIDC_ISSUER")
 	}
+	if *oidcClientID == "" {
+		*oidcClientID = os.Getenv("OIDC_CLIENT_ID")
+	}
+	if *oidcClientSecret == "" {
+		*oidcClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	}
+
+	var authorizer func(*http.Request) error
+	var ts oauth2.TokenSource
+
+	switch *authMode {
+	case "oidc":
+		log.Printf("Using OIDC authentication (issuer: %s)", *oidcIssuer)
+		if *oidcIssuer == "" || *oidcClientID == "" {
+			log.Fatal("OIDC mode requires -oidc_issuer and -oidc_client_id flags")
+		}
+
+		// Create OIDC verifier with timeout
+		log.Println("Creating OIDC verifier...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		oidcVerifier, err := oidc.NewVerifier(ctx, &oidc.Config{
+			IssuerURL:    *oidcIssuer,
+			ClientID:     *oidcClientID,
+			ClientSecret: *oidcClientSecret,
+		})
+		if err != nil {
+			log.Fatalf("Cannot create OIDC verifier: %v", err)
+		}
+		log.Println("OIDC verifier created successfully")
+
+		// Create OIDC authorizer
+		oidcAuth := oidc.NewAuthorizer(oidcVerifier)
+		authorizer = oidcAuth.AuthorizeRequest
+		log.Println("OIDC authorizer configured")
+
+		// For OIDC mode, check if we have Google credentials for upstream
+		// If not, try to get default credentials for public repos
+		log.Println("Setting up upstream token source...")
+		ts, err = google.DefaultTokenSource(context.Background(), scopeCloudPlatform, scopeUserInfoEmail)
+		if err != nil {
+			// Fall back to anonymous access for public repositories
+			log.Printf("Warning: No Google credentials available, using anonymous upstream access: %v", err)
+			ts = oauth2.StaticTokenSource(&oauth2.Token{})
+		}
+		log.Println("Upstream token source configured")
+
+	case "google":
+		log.Println("Using Google OAuth2 authentication")
+		var err error
+		ts, err = google.DefaultTokenSource(context.Background(), scopeCloudPlatform, scopeUserInfoEmail)
+		if err != nil {
+			log.Fatalf("Cannot initialize the OAuth2 token source: %v", err)
+		}
+		authorizer, err = googlehook.NewRequestAuthorizer(ts)
+		if err != nil {
+			log.Fatalf("Cannot create a request authorizer: %v", err)
+		}
+
+	default:
+		log.Fatalf("Invalid auth_mode: %s (must be 'google' or 'oidc')", *authMode)
+	}
+
+	log.Println("After switch statement, preparing to register views...")
+	log.Println("Registering OpenCensus views...")
 	if err := view.Register(views...); err != nil {
 		log.Fatal(err)
 	}
 
+	// Register storage metrics views.
+	if err := view.Register(storage.StorageViews()...); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Views registered successfully")
+
 	var er func(*http.Request, error)
-	var rl func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration) = func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration) {
+	rl := func(r *http.Request, status int, requestSize, responseSize int64, latency time.Duration) {
 		dump, err := httputil.DumpRequest(r, false)
 		if err != nil {
 			return
 		}
 		log.Printf("%q %d reqsize: %d, respsize %d, latency: %v", dump, status, requestSize, responseSize, latency)
 	}
-	var lrol func(string, *url.URL) goblet.RunningOperation = func(action string, u *url.URL) goblet.RunningOperation {
+	lrol := func(action string, u *url.URL) goblet.RunningOperation {
 		log.Printf("Starting %s for %s", action, u.String())
 		return &logBasedOperation{action, u}
 	}
-	var backupLogger *log.Logger = log.New(os.Stderr, "", log.LstdFlags)
+	backupLogger := log.New(os.Stderr, "", log.LstdFlags)
 	if *stackdriverProject != "" {
 		// Error reporter
 		ec, err := errorreporting.NewClient(context.Background(), *stackdriverProject, errorreporting.Config{
@@ -202,7 +296,7 @@ func main() {
 						Action: op.action,
 						URL:    op.u.String(),
 					},
-					Operation: &logpb.LogEntryOperation{
+					Operation: &logpb.LogEntryOperation{ //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 						Id:       op.id,
 						Producer: "github.com/google/goblet",
 						First:    true,
@@ -226,9 +320,19 @@ func main() {
 		}
 	}
 
+	log.Println("Creating server configuration...")
+
+	// Choose URL canonicalizer based on auth mode
+	var urlCanonicalizer func(*url.URL) (*url.URL, error)
+	if *authMode == "oidc" {
+		urlCanonicalizer = oidc.CanonicalizeURL
+	} else {
+		urlCanonicalizer = googlehook.CanonicalizeURL
+	}
+
 	config := &goblet.ServerConfig{
 		LocalDiskCacheRoot:         *cacheRoot,
-		URLCanonializer:            googlehook.CanonicalizeURL,
+		URLCanonializer:            urlCanonicalizer,
 		RequestAuthorizer:          authorizer,
 		TokenSource:                ts,
 		ErrorReporter:              er,
@@ -236,21 +340,70 @@ func main() {
 		LongRunningOperationLogger: lrol,
 	}
 
-	if *backupBucketName != "" && *backupManifestName != "" {
-		gsClient, err := storage.NewClient(context.Background())
-		if err != nil {
-			log.Fatal(err)
+	if *storageProvider != "" && *backupManifestName != "" {
+		log.Printf("Initializing storage provider: %s", *storageProvider)
+		storageConfig := &storage.Config{
+			Provider:          *storageProvider,
+			GCSBucket:         *backupBucketName,
+			S3Endpoint:        *s3Endpoint,
+			S3Bucket:          *s3Bucket,
+			S3AccessKeyID:     *s3AccessKeyID,
+			S3SecretAccessKey: *s3SecretAccessKey,
+			S3Region:          *s3Region,
+			S3UseSSL:          *s3UseSSL,
 		}
 
-		googlehook.RunBackupProcess(config, gsClient.Bucket(*backupBucketName), *backupManifestName, backupLogger)
+		provider, err := storage.NewProvider(context.Background(), storageConfig)
+		if err != nil {
+			log.Fatalf("Cannot create storage provider: %v", err)
+		}
+		if provider != nil {
+			defer provider.Close()
+			log.Println("Starting backup process...")
+			googlehook.RunBackupProcess(config, provider, *backupManifestName, backupLogger)
+			log.Println("Backup process initialized")
+		}
 	}
 
+	log.Println("Setting up Prometheus exporter...")
+	// Set up Prometheus exporter for metrics
+	pe, err := prometheus.NewExporter(prometheus.Options{
+		Namespace: "goblet",
+	})
+	if err != nil {
+		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+	}
+	view.RegisterExporter(pe)
+
+	// Expose metrics endpoint
+	http.Handle("/metrics", pe)
+
+	// Expose health endpoint
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		io.WriteString(w, "ok\n")
+		_, _ = io.WriteString(w, "ok\n")
 	})
+
+	// Main Git proxy handler
+	log.Println("Setting up HTTP handlers...")
 	http.Handle("/", goblet.HTTPHandler(config))
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
+
+	// Create server with timeouts to prevent resource exhaustion
+	server := &http.Server{
+		Addr:         fmt.Sprintf(":%d", *port),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	log.Printf("Starting HTTP server on port %d...", *port)
+	log.Fatal(server.ListenAndServe())
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 type LongRunningOperation struct {
@@ -290,7 +443,7 @@ func (op *stackdriverBasedOperation) Printf(format string, a ...interface{}) {
 	}
 	op.sdLogger.Log(logging.Entry{
 		Payload: lro,
-		Operation: &logpb.LogEntryOperation{
+		Operation: &logpb.LogEntryOperation{ //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 			Id:       op.id,
 			Producer: "github.com/google/goblet",
 		},
@@ -308,7 +461,7 @@ func (op *stackdriverBasedOperation) Done(err error) {
 	}
 	op.sdLogger.Log(logging.Entry{
 		Payload: lro,
-		Operation: &logpb.LogEntryOperation{
+		Operation: &logpb.LogEntryOperation{ //nolint:staticcheck // SA1019: Will be updated when dependencies are upgraded
 			Id:       op.id,
 			Producer: "github.com/google/goblet",
 			Last:     true,
