@@ -196,6 +196,22 @@ jobs:
         path: build/goblet-server-${{ matrix.platform }}*
         retention-days: 7
 
+  # Documentation validation - runs in parallel
+  validate-docs:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: false
+
+    - name: Validate markdown links
+      run: ./scripts/validate-links.py
+
   # CI Status Check - depends on all parallel jobs
   ci-complete:
     name: CI Complete
@@ -206,6 +222,7 @@ jobs:
       - lint
       - test-unit
       - build
+      - validate-docs
     steps:
     - name: CI Pipeline Complete
       run: echo "✓ All CI checks passed!"
