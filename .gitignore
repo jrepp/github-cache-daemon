@@ -49,3 +49,4 @@ tmp/
 
 # Logs
 *.log
+test_logs/
