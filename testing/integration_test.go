@@ -26,9 +26,11 @@ import (
 
 // IntegrationTestSetup manages the Docker Compose environment for integration tests.
 type IntegrationTestSetup struct {
-	composeFile  string
-	projectName  string
-	useComposeV2 bool
+	composeFile       string
+	projectName       string
+	useComposeV2      bool
+	containersRunning bool
+	managedByTest     bool
 }
 
 // NewIntegrationTestSetup creates a new integration test setup.
@@ -70,6 +72,16 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 		its.useComposeV2 = true
 	}
 
+	// Check if containers are already running (e.g., started by CI/Taskfile)
+	checkCmd := exec.Command("docker", "ps", "--filter", "name=goblet-minio", "--filter", "name=goblet-dex", "--format", "{{.Names}}")
+	output, err := checkCmd.Output()
+	if err == nil && len(output) > 0 {
+		t.Log("Docker Compose containers already running, reusing them...")
+		its.containersRunning = true
+		its.managedByTest = false
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -89,6 +101,9 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 		t.Fatalf("Failed to start Docker Compose: %v", err)
 	}
 
+	its.containersRunning = true
+	its.managedByTest = true
+
 	// Wait for services to be healthy
 	t.Log("Waiting for services to be healthy...")
 	time.Sleep(10 * time.Second)
@@ -97,6 +112,12 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 // Stop tears down the Docker Compose environment.
 func (its *IntegrationTestSetup) Stop(t *testing.T) {
 	t.Helper()
+
+	// Only stop containers if they were started by this test
+	if !its.managedByTest {
+		t.Log("Containers managed externally, not stopping...")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
