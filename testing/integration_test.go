@@ -87,18 +87,44 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 
 	t.Log("Starting Docker Compose environment for integration tests...")
 
-	// Stop any existing services first
+	// Stop any existing services first and wait for cleanup
+	t.Log("Cleaning up any existing containers...")
 	stopCmd := its.getComposeCommand(ctx, "down", "-v")
 	stopCmd.Stdout = os.Stdout
 	stopCmd.Stderr = os.Stderr
 	_ = stopCmd.Run() // Ignore errors if nothing is running
 
-	// Start services
-	startCmd := its.getComposeCommand(ctx, "up", "-d")
-	startCmd.Stdout = os.Stdout
-	startCmd.Stderr = os.Stderr
-	if err := startCmd.Run(); err != nil {
-		t.Fatalf("Failed to start Docker Compose: %v", err)
+	// Wait a bit for ports to be released (especially for port conflicts)
+	t.Log("Waiting for port cleanup...")
+	time.Sleep(2 * time.Second)
+
+	// Retry logic for starting services (handles transient port conflicts)
+	maxRetries := 3
+	var startErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			t.Logf("Retry attempt %d/%d...", attempt, maxRetries)
+			// Additional cleanup between retries
+			stopCmd := its.getComposeCommand(ctx, "down", "-v")
+			_ = stopCmd.Run()
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+
+		// Start services
+		startCmd := its.getComposeCommand(ctx, "up", "-d")
+		startCmd.Stdout = os.Stdout
+		startCmd.Stderr = os.Stderr
+		startErr = startCmd.Run()
+
+		if startErr == nil {
+			break
+		}
+
+		t.Logf("Failed to start Docker Compose (attempt %d): %v", attempt, startErr)
+	}
+
+	if startErr != nil {
+		t.Fatalf("Failed to start Docker Compose after %d attempts: %v", maxRetries, startErr)
 	}
 
 	its.containersRunning = true
