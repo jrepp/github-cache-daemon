@@ -79,6 +79,8 @@ services:
       /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
       /usr/bin/mc mb myminio/${S3_BUCKET:-goblet-backups} --ignore-existing;
       /usr/bin/mc policy set download myminio/${S3_BUCKET:-goblet-backups};
+      /usr/bin/mc mb myminio/goblet-test --ignore-existing;
+      /usr/bin/mc policy set download myminio/goblet-test;
       echo 'Minio setup complete';
       exit 0;
       "
