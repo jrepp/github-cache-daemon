@@ -26,15 +26,15 @@ import (
 
 // IntegrationTestSetup manages the Docker Compose environment for integration tests.
 type IntegrationTestSetup struct {
-	composeFile   string
-	projectName   string
-	useComposeV2  bool
+	composeFile  string
+	projectName  string
+	useComposeV2 bool
 }
 
 // NewIntegrationTestSetup creates a new integration test setup.
 func NewIntegrationTestSetup() *IntegrationTestSetup {
 	return &IntegrationTestSetup{
-		composeFile: "../docker-compose.test.yml",
+		composeFile: "../docker-compose.yml",
 		projectName: "goblet-test",
 	}
 }
@@ -42,12 +42,12 @@ func NewIntegrationTestSetup() *IntegrationTestSetup {
 // getComposeCommand returns the appropriate docker compose command based on what's available.
 func (its *IntegrationTestSetup) getComposeCommand(ctx context.Context, args ...string) *exec.Cmd {
 	if its.useComposeV2 {
-		// Use docker compose (v2)
-		composeArgs := append([]string{"compose", "-f", its.composeFile, "-p", its.projectName}, args...)
+		// Use docker compose (v2) with test profile
+		composeArgs := append([]string{"compose", "-f", its.composeFile, "--profile", "test", "-p", its.projectName}, args...)
 		return exec.CommandContext(ctx, "docker", composeArgs...)
 	}
-	// Use docker-compose (v1)
-	composeArgs := append([]string{"-f", its.composeFile, "-p", its.projectName}, args...)
+	// Use docker-compose (v1) with test profile
+	composeArgs := append([]string{"-f", its.composeFile, "--profile", "test", "-p", its.projectName}, args...)
 	return exec.CommandContext(ctx, "docker-compose", composeArgs...)
 }
 
