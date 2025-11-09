@@ -1,5 +1,8 @@
 # Goblet: Git caching proxy
 
+[![CI](https://github.com/google/goblet/actions/workflows/ci.yml/badge.svg)](https://github.com/google/goblet/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-validated-brightgreen)](docs/index.md)
+
 Goblet is a Git proxy server that caches repositories for read access. Git
 clients can configure their repositories to use this as an HTTP proxy server,
 and this proxy server serves git-fetch requests if it can be served from the
@@ -16,6 +19,88 @@ would be useful if you need to run a Git read-only mirroring server to offload
 the traffic.
 
 This is not an official Google product (i.e. a 20% project).
+
+## Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "Clients"
+        C1[Git Client]
+        C2[Terraform]
+        C3[CI/CD Pipeline]
+    end
+
+    subgraph "Goblet Cache"
+        LB[Load Balancer<br/>HAProxy]
+        G1[Goblet Instance 1]
+        G2[Goblet Instance 2]
+        G3[Goblet Instance 3]
+
+        LB --> G1
+        LB --> G2
+        LB --> G3
+    end
+
+    subgraph "Storage"
+        CACHE1[Local Cache<br/>SSD/NVMe]
+        CACHE2[Tiered Storage<br/>S3/GCS/Blob]
+        CACHE1 -.->|Archive| CACHE2
+    end
+
+    subgraph "Upstream"
+        GH[GitHub]
+        GL[GitLab]
+        BB[Bitbucket]
+    end
+
+    C1 -->|HTTP/HTTPS| LB
+    C2 -->|HTTP/HTTPS| LB
+    C3 -->|HTTP/HTTPS| LB
+
+    G1 --> CACHE1
+    G2 --> CACHE1
+    G3 --> CACHE1
+
+    G1 -.->|Cache Miss| GH
+    G2 -.->|Cache Miss| GL
+    G3 -.->|Cache Miss| BB
+
+    style LB fill:#e1f5ff
+    style CACHE1 fill:#fff3cd
+    style CACHE2 fill:#d1ecf1
+    style GH fill:#f8d7da
+    style GL fill:#f8d7da
+    style BB fill:#f8d7da
+```
+
+**Key Features:**
+- 🚀 **5-20x faster** for cached operations
+- 💾 **80% reduction** in network egress
+- 🔄 **Automatic fallback** during upstream outages
+- 🔒 **Multiple security patterns** for multi-tenant deployments
+- 📊 **Full observability** with Prometheus metrics
+
+## ⚠️ Security Notice
+
+**IMPORTANT:** Multi-tenant deployments with private repositories require additional security configuration.
+
+**Quick check:**
+- ✅ **Safe:** Single user per instance, public repos only, or sidecar pattern
+- 🚨 **At Risk:** Multiple users sharing instance with private repos
+
+**See:** [SECURITY.md](SECURITY.md) for immediate actions | [Complete Security Guide](docs/security/README.md)
+
+---
+
+## 📚 Documentation
+
+**Quick Links:**
+- **[Getting Started](docs/getting-started.md)** - Setup and first deployment
+- **[Security Guide](docs/security/README.md)** - Multi-tenant security
+- **[Deployment Patterns](docs/operations/deployment-patterns.md)** - Architecture options
+- **[Complete Documentation](docs/index.md)** - Full documentation index
+
+---
 
 ## Usage
 

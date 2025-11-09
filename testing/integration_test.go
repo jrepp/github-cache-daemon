@@ -26,16 +26,31 @@ import (
 
 // IntegrationTestSetup manages the Docker Compose environment for integration tests.
 type IntegrationTestSetup struct {
-	composeFile string
-	projectName string
+	composeFile       string
+	projectName       string
+	useComposeV2      bool
+	containersRunning bool
+	managedByTest     bool
 }
 
 // NewIntegrationTestSetup creates a new integration test setup.
 func NewIntegrationTestSetup() *IntegrationTestSetup {
 	return &IntegrationTestSetup{
-		composeFile: "../docker-compose.test.yml",
+		composeFile: "../docker-compose.yml",
 		projectName: "goblet-test",
 	}
+}
+
+// getComposeCommand returns the appropriate docker compose command based on what's available.
+func (its *IntegrationTestSetup) getComposeCommand(ctx context.Context, args ...string) *exec.Cmd {
+	if its.useComposeV2 {
+		// Use docker compose (v2) with test profile
+		composeArgs := append([]string{"compose", "-f", its.composeFile, "--profile", "test", "-p", its.projectName}, args...)
+		return exec.CommandContext(ctx, "docker", composeArgs...)
+	}
+	// Use docker-compose (v1) with test profile
+	composeArgs := append([]string{"-f", its.composeFile, "--profile", "test", "-p", its.projectName}, args...)
+	return exec.CommandContext(ctx, "docker-compose", composeArgs...)
 }
 
 // Start brings up the Docker Compose environment.
@@ -54,6 +69,17 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 			t.Skip("Docker Compose is not available, skipping integration tests")
 			return
 		}
+		its.useComposeV2 = true
+	}
+
+	// Check if containers are already running (e.g., started by CI/Taskfile)
+	checkCmd := exec.Command("docker", "ps", "--filter", "name=goblet-minio", "--filter", "name=goblet-dex", "--format", "{{.Names}}")
+	output, err := checkCmd.Output()
+	if err == nil && len(output) > 0 {
+		t.Log("Docker Compose containers already running, reusing them...")
+		its.containersRunning = true
+		its.managedByTest = false
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -61,19 +87,48 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 
 	t.Log("Starting Docker Compose environment for integration tests...")
 
-	// Stop any existing services first
-	stopCmd := exec.CommandContext(ctx, "docker-compose", "-f", its.composeFile, "-p", its.projectName, "down", "-v")
+	// Stop any existing services first and wait for cleanup
+	t.Log("Cleaning up any existing containers...")
+	stopCmd := its.getComposeCommand(ctx, "down", "-v")
 	stopCmd.Stdout = os.Stdout
 	stopCmd.Stderr = os.Stderr
 	_ = stopCmd.Run() // Ignore errors if nothing is running
 
-	// Start services
-	startCmd := exec.CommandContext(ctx, "docker-compose", "-f", its.composeFile, "-p", its.projectName, "up", "-d")
-	startCmd.Stdout = os.Stdout
-	startCmd.Stderr = os.Stderr
-	if err := startCmd.Run(); err != nil {
-		t.Fatalf("Failed to start Docker Compose: %v", err)
+	// Wait a bit for ports to be released (especially for port conflicts)
+	t.Log("Waiting for port cleanup...")
+	time.Sleep(2 * time.Second)
+
+	// Retry logic for starting services (handles transient port conflicts)
+	maxRetries := 3
+	var startErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			t.Logf("Retry attempt %d/%d...", attempt, maxRetries)
+			// Additional cleanup between retries
+			stopCmd := its.getComposeCommand(ctx, "down", "-v")
+			_ = stopCmd.Run()
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+
+		// Start services
+		startCmd := its.getComposeCommand(ctx, "up", "-d")
+		startCmd.Stdout = os.Stdout
+		startCmd.Stderr = os.Stderr
+		startErr = startCmd.Run()
+
+		if startErr == nil {
+			break
+		}
+
+		t.Logf("Failed to start Docker Compose (attempt %d): %v", attempt, startErr)
 	}
+
+	if startErr != nil {
+		t.Fatalf("Failed to start Docker Compose after %d attempts: %v", maxRetries, startErr)
+	}
+
+	its.containersRunning = true
+	its.managedByTest = true
 
 	// Wait for services to be healthy
 	t.Log("Waiting for services to be healthy...")
@@ -84,11 +139,17 @@ func (its *IntegrationTestSetup) Start(t *testing.T) {
 func (its *IntegrationTestSetup) Stop(t *testing.T) {
 	t.Helper()
 
+	// Only stop containers if they were started by this test
+	if !its.managedByTest {
+		t.Log("Containers managed externally, not stopping...")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	t.Log("Stopping Docker Compose environment...")
-	cmd := exec.CommandContext(ctx, "docker-compose", "-f", its.composeFile, "-p", its.projectName, "down", "-v")
+	cmd := its.getComposeCommand(ctx, "down", "-v")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
